@@ -8,6 +8,7 @@ infrastructure to allow developers with less experience to also create their own
 the HDL language of their choice and to also provide example projects on various FPGA boards + documentation.
 
 ![Image](https://github.com/user-attachments/assets/a5956085-1a22-4cf9-a580-338e8bb5f3de)
+
 Example of FPGA based PCIe accelerator infrastructure with LiteX and its cores.
 
 ## [> Prepare Environment
@@ -61,3 +62,26 @@ Execute the following:
 - `cd litecompute_poc`
 - `pip3 install --user -e .`
 
+## (> Simulation
+----------------
+
+All simulations are stored in *sim* directory
+
+### [> FFT Simulation
+
+```bash
+./maia_sdr_fft_sim.py --help
+usage: maia_sdr_fft_sim.py [-h] [--trace] [--with-window] [--radix RADIX] [--fft-order-log2 FFT_ORDER_LOG2] [--signal-freq SIGNAL_FREQ]
+
+MAIA SDR Simulation.
+
+options:
+  -h, --help            show this help message and exit
+  --trace               Enable VCD tracing.
+  --with-window         Enable FFT Windowing.
+  --radix RADIX         Radix 2/4.
+  --fft-order-log2 FFT_ORDER_LOG2
+                        Log2 of the FFT order.
+  --signal-freq SIGNAL_FREQ
+                        Input signal frequency.
+```

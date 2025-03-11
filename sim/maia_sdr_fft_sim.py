@@ -54,10 +54,12 @@ def generate_sample_data(frequency, sample_rate, repetitions, data_width):
     imag        = np.int16(im_wave * gain)
     stream_data = []
 
-    for i in range(len(real)):
-        re = two_complement_encode(int(real[i]), data_width)
-        im = two_complement_encode(int(imag[i]), data_width)
-        stream_data.append((im << data_width) | (re))
+    with open("lut.txt", "w") as fd:
+        for i in range(len(real)):
+            re = two_complement_encode(int(real[i]), data_width)
+            im = two_complement_encode(int(imag[i]), data_width)
+            fd.write(f"{real[i]} {imag[i]} {re_wave[i]} {im_wave[i]}\n")
+            stream_data.append((im << data_width) | (re))
 
     return stream_data
 
@@ -65,7 +67,8 @@ def generate_sample_data(frequency, sample_rate, repetitions, data_width):
 
 _io = [
     # Clk / Rst.
-    ("sys_clk",  0, Pins(1)),
+    ("sys_clk",   0, Pins(1)),
+    ("fft2x_clk", 0, Pins(1)),
 ]
 
 class Platform(SimPlatform):
@@ -76,7 +79,12 @@ class Platform(SimPlatform):
 # Sim ----------------------------------------------------------------------------------------------
 
 class SimSoC(SoCCore):
-    def __init__(self, sys_clk_freq=int(100e6), data_width=16):
+    def __init__(self, sys_clk_freq=int(200e6), data_width=16,
+        with_window    = False,
+        radix          = 2,
+        fft_order_log2 = 10,
+        signal_freq    = 10e6,
+        ):
 
         # Platform ---------------------------------------------------------------------------------
         platform  = Platform()
@@ -86,17 +94,25 @@ class SimSoC(SoCCore):
         sys_clk = platform.request("sys_clk")
         self.submodules.crg = CRG(sys_clk)
 
+        self.cd_fft_2x = ClockDomain()
+        self.comb += [
+            self.cd_fft_2x.clk.eq(platform.request("fft2x_clk")),
+            self.cd_fft_2x.rst.eq(ResetSignal("sys")),
+        ]
+
         # SoC --------------------------------------------------------------------------------------
         SoCMini.__init__(self, platform, clk_freq=sys_clk_freq)
 
         # MAIA HDL FFT Wrapper ---------------------------------------------------------------------
         self.fft = MAIAHDLFFTWrapper(platform,
-            data_width = data_width,
-            order_log2 = 10,
-            radix      = 4,
-            window     = None,
-            cmult3x    = False,
-            cd_domain  = "sys",
+            data_width  = data_width,
+            order_log2  = fft_order_log2,
+            radix       = radix,
+            window      = {True: "blackmanharris", False: None}[with_window],
+            cmult3x     = False,
+            cd_domain   = "sys",
+            cd_domain2x = "fft_2x",
+            cd_domain3x = "fft_3x",
         )
 
         # Signals ----------------------------------------------------------------------------------
@@ -109,7 +125,7 @@ class SimSoC(SoCCore):
         ]
 
         # Streamer ---------------------------------------------------------------------------------
-        streamer_data = generate_sample_data(25e6, sys_clk_freq, 1000, data_width)
+        streamer_data = generate_sample_data(signal_freq, sys_clk_freq, 10000, data_width)
 
         self.streamer = streamer = PacketStreamer(data_width * 2, streamer_data, 8)
         self.comb += streamer.source.connect(self.fft.sink)
@@ -141,11 +157,25 @@ class SimSoC(SoCCore):
 def main():
     parser = argparse.ArgumentParser(description="MAIA SDR Simulation.")
     parser.add_argument("--trace", action="store_true", help="Enable VCD tracing.")
+
+    # FFT Configuration.
+    parser.add_argument("--with-window",    action="store_true",      help="Enable FFT Windowing.")
+    parser.add_argument("--radix",          default=2,    type=int,   help="Radix 2/4.")
+    parser.add_argument("--fft-order-log2", default=10,   type=int,   help="Log2 of the FFT order.")
+    parser.add_argument("--signal-freq",    default=10e6, type=float, help="Input signal frequency.")
+
     args = parser.parse_args()
 
-    sim_config = SimConfig(default_clk="sys_clk")
+    sim_config = SimConfig(default_clk="sys_clk", default_clk_freq=int(1e6))
+    if args.with_window:
+        sim_config.add_clocker("fft2x_clk", int(2e6))
 
-    soc = SimSoC()
+    soc = SimSoC(
+        with_window    = args.with_window,
+        radix          = args.radix,
+        fft_order_log2 = args.fft_order_log2,
+        signal_freq    = args.signal_freq,
+    )
     builder = Builder(soc, output_dir="build/sim", csr_csv="csr.csv")
     builder.build(sim_config=sim_config, trace=args.trace, trace_fst=True)
 
