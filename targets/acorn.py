@@ -31,6 +31,8 @@ from litepcie.software import generate_litepcie_software_headers
 
 from liteeth.phy.a7_gtp import QPLLSettings, QPLL
 
+from litescope import LiteScopeAnalyzer
+
 from litecompute_poc.maia_hdl_fft_wrapper import MAIAHDLFFTWrapper
 
 # CRG ----------------------------------------------------------------------------------------------
@@ -68,9 +70,10 @@ class BaseSoC(SoCMini):
     def __init__(self, variant="cle-215+", sys_clk_freq=125e6,
         with_pcie       = False,
         with_led_chaser = True,
-        with_window    = False,
-        radix          = 2,
-        fft_order_log2 = 10,
+        with_uartbone   = True,
+        with_window     = False,
+        radix           = 2,
+        fft_order_log2  = 10,
         **kwargs):
         platform      = sqrl_acorn.Platform(variant=variant)
         platform.name = "acorn" # Keep target name
@@ -80,7 +83,7 @@ class BaseSoC(SoCMini):
         SoCMini.__init__(self, platform, sys_clk_freq,
             ident         = "LiteX SoC on Acorn CLE-101/215(+)",
             ident_version = True,
-            with_jtagbone = True,
+            with_uartbone = with_uartbone,
         )
 
         # CRG --------------------------------------------------------------------------------------
@@ -149,6 +152,23 @@ class BaseSoC(SoCMini):
                 pads         = platform.request_all("user_led"),
                 sys_clk_freq = sys_clk_freq)
 
+    def add_fft_datapath_probe(self):
+        analyzer_signals = [
+            self.fft.sink,
+            self.fft.source,
+            self.fft.re_in,
+            self.fft.im_in,
+            self.fft.re_out,
+            self.fft.im_out,
+        ]
+
+        self.analyzer = LiteScopeAnalyzer(analyzer_signals,
+            depth        = 1024,
+            clock_domain = "sys",
+            register     = True,
+            csr_csv      = "analyzer.csv"
+        )
+
 # Build --------------------------------------------------------------------------------------------
 
 def main():
@@ -159,7 +179,6 @@ def main():
     parser.add_argument("--load",       action="store_true",      help="Load bitstream")
     parser.add_argument("--flash",      action="store_true",      help="Flash bitstream.")
     parser.add_argument("--variant",    default="cle-215+",       help="Board variant (cle-215+, cle-215 or cle-101).")
-    parser.add_argument("--driver",     action="store_true",      help="Generate PCIe driver from LitePCIe.")
     parser.add_argument("--programmer", default="openfpgaloader", help="Programmer select from OpenOCD/openFPGALoader.",
         choices=[
             "openocd",
@@ -171,15 +190,23 @@ def main():
     parser.add_argument("--radix",          default=2,    type=int,   help="Radix 2/4.")
     parser.add_argument("--fft-order-log2", default=10,   type=int,   help="Log2 of the FFT order.")
 
+    # Litescope Analyzer Probes.
+    probeopts = parser.add_mutually_exclusive_group()
+    probeopts.add_argument("--with-fft-datapath-probe", action="store_true", help="Enable FFT Datapath Probe.")
+
     args = parser.parse_args()
 
     soc = BaseSoC(
         variant        = args.variant,
         with_pcie      = True,
+        with_uartbone  = True,
         with_window    = args.with_window,
         radix          = args.radix,
         fft_order_log2 = args.fft_order_log2,
     )
+
+    if args.with_fft_datapath_probe:
+        soc.add_fft_datapath_probe()
 
     builder = Builder(soc, csr_csv="csr.csv", bios_console="lite")
     builder.build(run=args.build)
