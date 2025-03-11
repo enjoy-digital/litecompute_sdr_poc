@@ -104,6 +104,14 @@ class MAIAHDLFFTWrapper(LiteXModule):
         assert window  in [None, 'blackmanharris']
         assert cmult3x in [False, True]
 
+        # Signals.
+        # --------
+        self.re_in        = Signal(data_width)
+        self.im_in        = Signal(data_width)
+        self.re_out       = Signal(self.out_width)
+        self.im_out       = Signal(self.out_width)
+        self.source_first = Signal()
+
         self.ip_name = "fft_radix{radix}_{window}{cmult3x}".format(
             radix   = radix,
             window  = {True: "nowindow", False: "blackmanharris"}[window is None],
@@ -119,13 +127,13 @@ class MAIAHDLFFTWrapper(LiteXModule):
             i_rst      = ResetSignal(cd_domain),
 
             # Input
-            i_re_in    = self.sink.data[:data_width],
-            i_im_in    = self.sink.data[data_width:],
+            i_re_in    = self.re_in,
+            i_im_in    = self.im_in,
             i_clken    = self.sink.valid,
 
             # Output
-            o_re_out   = self.source.data[:out_width],
-            o_im_out   = self.source.data[out_width:],
+            o_re_out   = self.re_out,
+            o_im_out   = self.im_out,
             o_out_last = self.source.last,
         )
 
@@ -163,8 +171,28 @@ class MAIAHDLFFTWrapper(LiteXModule):
 
         # FFT module has no ready nor output valid (but re_out/im_out are updated one clock cycle after
         # clken/valid goes high).
-        self.comb += sink.ready.eq(1)
+        self.comb += [
+            sink.ready.eq(1),
+            sink.first.eq(self.source_first),
+        ]
         self.sync += source.valid.eq(sink.valid)
+
+        self.sync += [
+            If(source.last,
+               self.source_first.eq(1),
+            ).Elif(source.valid,
+               self.source_first.eq(0),
+            )
+        ]
+
+        # Reconstruct samples.
+        self.comb += [
+            # Input.
+            self.re_in.eq(self.sink.data[:data_width]),
+            self.im_in.eq(self.sink.data[data_width:]),
+            # Output.
+            self.source.data.eq(Cat(self.re_out, self.im_out)),
+        ]
 
     def do_finalize(self):
         src_dir  = os.path.join(self.platform.output_dir, "maia_hdl_fft")
