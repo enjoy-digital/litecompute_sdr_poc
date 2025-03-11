@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+
+#
+# This file is part of LiteX-Boards.
+#
+# Copyright (c) 2021-2024 Florent Kermarrec <florent@enjoy-digital.fr>
+# SPDX-License-Identifier: BSD-2-Clause
+
+import argparse
+import subprocess
+
+from migen import *
+
+from litex.gen import *
+
+from litex.build.io import DifferentialInput
+
+from litex_boards.platforms import sqrl_acorn
+
+from litex.soc.interconnect.csr import *
+from litex.soc.interconnect     import stream
+
+from litex.soc.integration.soc_core import *
+from litex.soc.integration.builder import *
+
+from litex.soc.cores.clock import *
+from litex.soc.cores.led   import LedChaser
+
+from litepcie.phy.s7pciephy import S7PCIEPHY
+from litepcie.software import generate_litepcie_software_headers
+
+from liteeth.phy.a7_gtp import QPLLSettings, QPLL
+
+from litecompute_poc.maia_hdl_fft_wrapper import MAIAHDLFFTWrapper
+
+# CRG ----------------------------------------------------------------------------------------------
+
+class CRG(LiteXModule):
+    def __init__(self, platform, sys_clk_freq, with_window=False):
+        self.rst          = Signal()
+        self.cd_sys       = ClockDomain()
+        self.cd_sys4x     = ClockDomain()
+        self.cd_sys4x_dqs = ClockDomain()
+        self.cd_idelay    = ClockDomain()
+
+        if with_window:
+            self.cd_sys2x = ClockDomain()
+
+        # Clk/Rst.
+        clk200    = platform.request("clk200")
+        clk200_se = Signal()
+        self.specials += DifferentialInput(clk200.p, clk200.n, clk200_se)
+
+        # PLL.
+        self.pll = pll = S7PLL()
+        self.comb += pll.reset.eq(self.rst)
+        pll.register_clkin(clk200_se, 200e6)
+        pll.create_clkout(self.cd_sys,       sys_clk_freq)
+        platform.add_false_path_constraints(self.cd_sys.clk, pll.clkin) # Ignore sys_clk to pll.clkin path created by SoC's rst.
+
+        # MAIA FFT.
+        if with_window:
+            pll.create_clkout(self.cd_sys2x, 2 * sys_clk_freq)
+
+# BaseSoC -----------------------------------------------------------------------------------------
+
+class BaseSoC(SoCMini):
+    def __init__(self, variant="cle-215+", sys_clk_freq=125e6,
+        with_pcie       = False,
+        with_led_chaser = True,
+        with_window    = False,
+        radix          = 2,
+        fft_order_log2 = 10,
+        **kwargs):
+        platform      = sqrl_acorn.Platform(variant=variant)
+        platform.name = "acorn" # Keep target name
+        platform.add_extension(sqrl_acorn._litex_acorn_baseboard_mini_io, prepend=True)
+
+        # SoCCore ----------------------------------------------------------------------------------
+        SoCMini.__init__(self, platform, sys_clk_freq,
+            ident         = "LiteX SoC on Acorn CLE-101/215(+)",
+            ident_version = True,
+            with_jtagbone = True,
+        )
+
+        # CRG --------------------------------------------------------------------------------------
+        self.crg = CRG(platform, sys_clk_freq, with_window=with_window)
+
+        # PCIe -------------------------------------------------------------------------------------
+        if with_pcie:
+            self.pcie_phy = S7PCIEPHY(platform, platform.request("pcie_x1"),
+                data_width = 64,
+                bar0_size  = 0x20000)
+            self.add_pcie(phy=self.pcie_phy, ndmas=1)
+            platform.toolchain.pre_placement_commands.append("reset_property LOC [get_cells -hierarchical -filter {{NAME=~pcie_s7/*gtp_channel.gtpe2_channel_i}}]")
+            platform.toolchain.pre_placement_commands.append("set_property LOC GTPE2_CHANNEL_X0Y7 [get_cells -hierarchical -filter {{NAME=~pcie_s7/*gtp_channel.gtpe2_channel_i}}]")
+
+            # PCIe QPLL Settings.
+            qpll_pcie_settings = QPLLSettings(
+                refclksel  = 0b001,
+                fbdiv      = 5,
+                fbdiv_45   = 5,
+                refclk_div = 1,
+            )
+
+            platform.add_platform_command("set_property SEVERITY {{Warning}} [get_drc_checks REQP-49]")
+
+            # Shared QPLL.
+            self.qpll = qpll = QPLL(
+                gtrefclk0     = self.pcie_phy.pcie_refclk,
+                qpllsettings0 = qpll_pcie_settings,
+                gtgrefclk1    = Open(),
+                qpllsettings1 = None,
+            )
+            self.pcie_phy.use_external_qpll(qpll_channel=qpll.channels[0])
+
+        # MAIA HDL FFT Wrapper ---------------------------------------------------------------------
+        self.fft = MAIAHDLFFTWrapper(platform,
+            data_width  = 16,
+            order_log2  = fft_order_log2,
+            radix       = radix,
+            window      = {True: "blackmanharris", False: None}[with_window],
+            cmult3x     = False,
+            cd_domain   = "sys",
+            cd_domain2x = "sys2x",
+            cd_domain3x = "fft_3x",
+        )
+
+        # TX/RX Datapath ---------------------------------------------------------------------------
+
+        # PCIe <-> MAIAHDLFFTWrapper.
+        # ---------------------------
+
+        self.tx_conv = stream.Converter(64, 32)
+        # FIXME: FFT output size is not always == input size
+        self.rx_conv = stream.Converter(32, 64)
+
+        self.pipeline = stream.Pipeline(
+            self.pcie_dma0.source,
+            self.tx_conv,
+            self.fft,
+            self.rx_conv,
+            self.pcie_dma0.sink,
+        )
+
+        # Leds -------------------------------------------------------------------------------------
+        if with_led_chaser:
+            self.leds = LedChaser(
+                pads         = platform.request_all("user_led"),
+                sys_clk_freq = sys_clk_freq)
+
+# Build --------------------------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(description="LiteX SoC on Acorn CLE-101/215(+).")
+
+    # Build/Load/Utilities.
+    parser.add_argument("--build",      action="store_true",      help="Build bitstream")
+    parser.add_argument("--load",       action="store_true",      help="Load bitstream")
+    parser.add_argument("--flash",      action="store_true",      help="Flash bitstream.")
+    parser.add_argument("--variant",    default="cle-215+",       help="Board variant (cle-215+, cle-215 or cle-101).")
+    parser.add_argument("--driver",     action="store_true",      help="Generate PCIe driver from LitePCIe.")
+    parser.add_argument("--programmer", default="openfpgaloader", help="Programmer select from OpenOCD/openFPGALoader.",
+        choices=[
+            "openocd",
+            "openfpgaloader"
+    ])
+
+    # FFT Configuration.
+    parser.add_argument("--with-window",    action="store_true",      help="Enable FFT Windowing.")
+    parser.add_argument("--radix",          default=2,    type=int,   help="Radix 2/4.")
+    parser.add_argument("--fft-order-log2", default=10,   type=int,   help="Log2 of the FFT order.")
+
+    args = parser.parse_args()
+
+    soc = BaseSoC(
+        variant        = args.variant,
+        with_pcie      = True,
+        with_window    = args.with_window,
+        radix          = args.radix,
+        fft_order_log2 = args.fft_order_log2,
+    )
+
+    builder = Builder(soc, csr_csv="csr.csv", bios_console="lite")
+    builder.build(run=args.build)
+
+    # Generate LitePCIe Driver.
+    generate_litepcie_software_headers(soc, "software/kernel")
+
+    if args.load:
+        prog = soc.platform.create_programmer(args.programmer)
+        prog.load_bitstream(builder.get_bitstream_filename(mode="sram"))
+
+    if args.flash:
+        prog = soc.platform.create_programmer(args.programmer)
+        prog.flash(0, builder.get_bitstream_filename(mode="flash"))
+
+if __name__ == "__main__":
+    main()
