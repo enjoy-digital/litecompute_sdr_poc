@@ -33,13 +33,13 @@ def generate_sample_data(output, frequency, sample_rate, repetitions, data_width
     for i in range(len(real)):
         re = two_complement_encode(int(real[i]), data_width)
         im = two_complement_encode(int(imag[i]), data_width)
-        re = int(real[i])
-        im = int(imag[i])
+        if i < 10:
+            print(f"{re:08x} {im:08x}")
         stream_data.append(re)
         stream_data.append(im)
     print(type(stream_data))
 
-    arr = np.array(stream_data, dtype=np.int16)
+    arr = np.array(stream_data, dtype=np.uint16)
     print(stream_data[0:10])
     print(arr[0:10])
     for i in range(10):
