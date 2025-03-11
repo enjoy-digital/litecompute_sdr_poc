@@ -32,18 +32,18 @@ for i in range(0, len(samples), 2):
     im_in.append(samples[i + 1])
 
 # Frequency axis.
-freq_raw = np.arange(N) * (fs / N)
-freq_raw = freq_raw[0:N // 2]
+freq_raw = np.arange(N) * (fs/2 / N)
+#freq_raw = freq_raw[0:N // 2]
 
 
 plt.figure(figsize=(12, 6))
-for i in range(2*1024, len(re_in)-1024, 1024):
+for i in range(0*1024, len(re_in)-1024, 1024):
     real     = np.array(re_in[i: i + 1024])
     imag     = np.array(im_in[i: i + 1024])
     fft_data = real + 1j * imag
     # Magnitude of FFT
     magnitude = np.abs(fft_data)
-    magnitude = magnitude[0:N // 2]
+    #magnitude = magnitude[0:N // 2]
 
     # Plot
     plt.plot(freq_raw / 1e6, magnitude, '-o', markersize=4)#, label='FFT Magnitude')
