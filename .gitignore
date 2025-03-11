@@ -1,3 +1,15 @@
 __pycache__
 build
 csr.csv
+litepcie_test
+litepcie_util
+*.d
+*.o
+*.bin
+*.a
+*.order
+*.cmd
+*.ko
+*.mod
+*.mod.c
+Module.symvers
