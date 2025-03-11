@@ -7,6 +7,7 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 
+import argparse
 import numpy as np
 
 def two_complement_encode(value, bits):
@@ -52,11 +53,20 @@ def generate_sample_data(output, frequency, sample_rate, repetitions, data_width
     return stream_data
 
 def main():
+    parser = argparse.ArgumentParser(description="MAIA SDR Simulation.")
+    # FFT Configuration.
+    parser.add_argument("--signal-freq", default=10e6,  type=float, help="Input signal frequency (Hz).")
+    parser.add_argument("--sample-rate", default=100e6, type=float, help="Sample rate (Hz).")
+    parser.add_argument("--repetitions", default=1000,  type=int,   help="Input signal Repetitions.")
+    parser.add_argument("--data-width",  default=16,    type=int,   help="Input signal size.")
+
+    args = parser.parse_args()
+
     generate_sample_data(output="data.bin",
-        frequency   = 20e6,
-        sample_rate = 100e6,
-        repetitions = 1000,
-        data_width  = 16,
+        frequency   = args.signal_freq,
+        sample_rate = args.sample_rate,
+        repetitions = args.repetitions,
+        data_width  = args.data_width,
     )
                 
 
