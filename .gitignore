@@ -13,3 +13,5 @@ litepcie_util
 *.mod
 *.mod.c
 Module.symvers
+*.csv
+*.vcd

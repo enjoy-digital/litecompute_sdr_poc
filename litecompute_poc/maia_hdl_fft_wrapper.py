@@ -173,7 +173,7 @@ class MAIAHDLFFTWrapper(LiteXModule):
         # clken/valid goes high).
         self.comb += [
             sink.ready.eq(1),
-            sink.first.eq(self.source_first),
+            source.first.eq(self.source_first),
         ]
         self.sync += source.valid.eq(sink.valid)
 
