@@ -26,10 +26,13 @@ from litex.soc.integration.soc_core import *
 from litex.soc.integration.builder import *
 
 from litex.soc.interconnect        import stream
+from litex.soc.interconnect.csr    import CSRStorage, CSRField
+
+from liteeth.phy.model import LiteEthPHYModel
 
 sys.path.append("..")
 
-from utils import PacketStreamer, PacketChecker
+from utils import PacketStreamer, PacketChecker, clamp_nbits
 
 from litecompute_poc.maia_hdl_fir_wrapper import MAIAHDLFIRWrapper
 
@@ -82,38 +85,62 @@ def read_sample_data_from_file(sample_file, data_width):
             samples.append((im << data_width) | (re))
     return samples
 
-def compute_fir_response(re_in, im_in, coefficients):
-    # Get lengths
-    signal_len = len(re_in)
-    coeff_len  = len(coefficients)
-    output_len = signal_len - coeff_len + 1
+def model(macc_trunc, ow, taps, decimation, re_in, im_in):
+    assert len(taps) % decimation == 0
+    taps    = np.array(taps).reshape(-1, decimation)
+    history = np.zeros(taps.size - 1, 'int')
+    re_out  = np.zeros(len(re_in) // decimation, 'int')
+    im_out  = np.zeros(len(re_in) // decimation, 'int')
+    re_in   = np.concatenate((history, re_in))
+    im_in   = np.concatenate((history, im_in))
+    for j in range(re_out.size):
+        # initial values for rounding
+        acc_init = (2**(macc_trunc - 1)
+                    if macc_trunc >= 1
+                    else 0)
+        re0, im0, re1, im1 = [acc_init] * 4
+        for k in range(taps.shape[0]):
+            wr = re_in[(j + taps.shape[0] - k - 1)
+                       * decimation:][:decimation]
+            wi = im_in[(j + taps.shape[0] - k - 1)
+                       * decimation:][:decimation]
+            sr = np.sum(wr[::-1] * taps[k])
+            si = np.sum(wi[::-1] * taps[k])
+            if k % 2 == 0:
+                re0 += sr
+                im0 += si
+            else:
+                re1 += sr
+                im1 += si
+        re0       = clamp_nbits(re0 >> macc_trunc, ow)
+        im0       = clamp_nbits(im0 >> macc_trunc, ow)
+        re1       = clamp_nbits(re1 >> macc_trunc, ow)
+        im1       = clamp_nbits(im1 >> macc_trunc, ow)
+        re_out[j] = clamp_nbits(re0 + re1, ow)
+        im_out[j] = clamp_nbits(im0 + im1, ow)
+    return re_out, im_out
 
-    # Check if we have enough data
-    if signal_len < coeff_len:
-        return []
-
-    # Initialize output list
-    output = []
-
-    # Compute convolution manually
-    for i in range(output_len):
-        # Calculate one output sample (complex)
-        real_part = 0
-        imag_part = 0
-        for j in range(coeff_len):
-            # Multiply complex input by real coefficient
-            real_part += re_in[i + j] * coefficients[j]
-            imag_part += im_in[i + j] * coefficients[j]
-        output.append(real_part)
-        output.append(imag_part)
-
-    return output
 
 # IOs ----------------------------------------------------------------------------------------------
 
 _io = [
     # Clk / Rst.
     ("sys_clk",   0, Pins(1)),
+
+    # Ethernet (Stream Endpoint).
+    ("eth_clocks", 0,
+        Subsignal("tx", Pins(1)),
+        Subsignal("rx", Pins(1)),
+    ),
+    ("eth", 0,
+        Subsignal("source_valid", Pins(1)),
+        Subsignal("source_ready", Pins(1)),
+        Subsignal("source_data",  Pins(8)),
+
+        Subsignal("sink_valid",   Pins(1)),
+        Subsignal("sink_ready",   Pins(1)),
+        Subsignal("sink_data",    Pins(8)),
+    ),
 ]
 
 class Platform(SimPlatform):
@@ -127,6 +154,7 @@ class SimSoC(SoCCore):
     def __init__(self, sys_clk_freq=int(200e6), data_in_width=16, data_out_width=16,
         stream_file = None,
         coeff_len   = 32,
+        len_log2    = 8,
         signal_freq = 10e6,
         ):
 
@@ -154,7 +182,7 @@ class SimSoC(SoCCore):
             decim_width    = 7,
             oper_width     = 7,
             macc_trunc     = 0, #19,
-            len_log2       = 8,
+            len_log2       = len_log2,
             cd_domain      = "sys",
             add_csr        = False,
         )
@@ -164,7 +192,7 @@ class SimSoC(SoCCore):
             fir.decimation.eq(1),
 
             # Operations minus one.
-            fir.operations_minus_one.eq(coeff_len // 2),
+            fir.operations_minus_one.eq((coeff_len // 2) - 1),
 
             # ODD Operations.
             fir.odd_operations.eq(0),
@@ -179,9 +207,15 @@ class SimSoC(SoCCore):
         )
         fsm.act("TRANSMIT",
             NextValue(fir.coeff_waddr, fir.coeff_waddr + 1),
-            fir.coeff_wdata.eq(1),
+            If((fir.coeff_waddr < coeff_len // 2),
+                fir.coeff_wdata.eq(1),
+            ).Elif((fir.coeff_waddr > 127) & (fir.coeff_waddr < 144),
+                fir.coeff_wdata.eq(1),
+            ).Else(
+                fir.coeff_wdata.eq(0),
+            ),
             fir.coeff_wren.eq(1),
-            If(fir.coeff_waddr == coeff_len - 1,
+            If(fir.coeff_waddr == (2**len_log2) - 1,
                NextState("END"),
             )
         )
@@ -202,31 +236,64 @@ class SimSoC(SoCCore):
 
         self.streamer = streamer = PacketStreamer(data_in_width * 2, streamer_data, 0)
         self.comb += [
-            streamer.source.connect(self.fir.sink, omit=["ready"]),
+            streamer.source.connect(self.fir.sink, omit=["ready", "valid"]),
             streamer.source.ready.eq(fir.sink.ready & coeff_write_end),
+            fir.sink.valid.eq(streamer.source.valid & coeff_write_end),
         ]
 
         # Checker ----------------------------------------------------------------------------------
-        re_part      = [i for i in range(0, len(streamer_data), 2)]
-        im_part      = [i for i in range(1, len(streamer_data), 2)]
-        checker_data = compute_fir_response(re_part, im_part, [1]*coeff_len)
+        re_part      = [(0xffff & streamer_data[i]) for i in range(0, len(streamer_data), 1)]
+        im_part      = [(0xffff & (streamer_data[i] >> data_out_width)) for i in range(0, len(streamer_data), 1)]
+        checker_data = []
+        re_part, im_part = model(0, data_out_width, [1] * (coeff_len + 2), 1, re_part, im_part)
+        with open("oracle.txt", "w") as fd:
+            for i in range(len(re_part)):
+                re = two_complement_encode(int(re_part[i]), data_out_width)
+                im = two_complement_encode(int(im_part[i]), data_out_width)
+                checker_data.append(re)
+                checker_data.append(im)
+                fd.write(f"{re_part[i]} {im_part[i]}\n");
 
         self.checker = checker = PacketChecker(data_out_width, checker_data)
+        #checker.add_debug("FIR")
 
-        self.comb += fir.source.connect(checker.sink)
+        self.comb += [
+            fir.source.connect(checker.sink, omit=["ready"]),
+            fir.source.ready.eq(checker.sink.ready & coeff_write_end),
+        ]
+
+        # Etherbone
+        #self.ethphy = LiteEthPHYModel(self.platform.request("eth", 0))
+        #self.add_etherbone( 
+        #    phy         = self.ethphy,
+        #    ip_address  = "192.168.1.51",
+        #    mac_address = 0x10e2d5000001,
+        #    data_width  = 32,
+        #    with_ethmac = False,
+        #)
+
+        #self._coeff_ctrl = CSRStorage(description="Control Registers.", fields=[
+        #    CSRField("coeff_write_end", size=1, offset=0, description="End Of Coefficient load.")
+        #])
+        #self.comb += coeff_write_end.eq(self._coeff_ctrl.fields.coeff_write_end)
 
         # Sim Debug --------------------------------------------------------------------------------
         self.sync += If(fir.source.valid, Display("%d %d", re_out, im_out))
 
         # Sim Finish -------------------------------------------------------------------------------
-        self.sync += If(streamer.source.last, Finish())
+        #self.sync += If(streamer.source.last, Finish())
+        ##self.sync += If(coeff_write_end, Finish())
+        cycles = Signal(32)
+        ##self.sync += cycles.eq(cycles + 1)
+        self.sync += If(cycles == 1000, Finish())
 
 # Build --------------------------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(description="MAIA SDR Simulation.")
-    parser.add_argument("--trace", action="store_true", help="Enable VCD tracing.")
-    parser.add_argument("--file",  default=None,        help="input stream file.")
+    parser.add_argument("--trace",     action="store_true",     help="Enable VCD tracing.")
+    parser.add_argument("--file",      default=None,            help="input stream file.")
+    parser.add_argument("--remote-ip", default="192.168.1.100", help="Remote IP address of TFTP server.")
 
     # FFT Configuration.
     parser.add_argument("--signal-freq",    default=10e6, type=float, help="Input signal frequency.")
@@ -234,12 +301,14 @@ def main():
     args = parser.parse_args()
 
     sim_config = SimConfig(default_clk="sys_clk", default_clk_freq=int(1e6))
+    #sim_config.add_module("ethernet", "eth", args={"interface": "tap0", "ip": args.remote_ip})
 
     soc = SimSoC(stream_file=args.file,
         signal_freq = args.signal_freq,
     )
     builder = Builder(soc, output_dir="build/sim", csr_csv="csr.csv")
-    builder.build(sim_config=sim_config, trace=args.trace, trace_fst=True)
+    builder.build(sim_config=sim_config,
+        trace=args.trace, trace_fst=True)
 
 if __name__ == "__main__":
     main()
