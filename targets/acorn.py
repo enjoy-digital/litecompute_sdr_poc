@@ -134,9 +134,9 @@ class BaseSoC(SoCMini):
         # PCIe <-> MAIAHDLFFTWrapper.
         # ---------------------------
 
-        self.tx_conv = stream.Converter(64, 32)
+        self.tx_conv = ResetInserter()(stream.Converter(64, 32))
         # FIXME: FFT output size is not always == input size
-        self.rx_conv = stream.Converter(32, 64)
+        self.rx_conv = ResetInserter()(stream.Converter(32, 64))
 
         self.pipeline = stream.Pipeline(
             self.pcie_dma0.source,
@@ -145,6 +145,13 @@ class BaseSoC(SoCMini):
             self.rx_conv,
             self.pcie_dma0.sink,
         )
+
+        # Disables/clean FFT when no stream.
+        self.comb += [
+            self.fft.reset.eq(~self.pcie_dma0.reader.enable),
+            self.tx_conv.reset.eq(~self.pcie_dma0.reader.enable),
+            self.rx_conv.reset.eq(~self.pcie_dma0.reader.enable),
+        ]
 
         # Leds -------------------------------------------------------------------------------------
         if with_led_chaser:

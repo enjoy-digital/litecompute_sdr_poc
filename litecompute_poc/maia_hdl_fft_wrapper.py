@@ -90,6 +90,9 @@ class MAIAHDLFFTWrapper(LiteXModule):
         self.sink   = sink   = stream.Endpoint([("data", 2 * data_width)])
         self.source = source = stream.Endpoint([("data", 2 * (out_width))])
 
+        # Signals ----------------------------------------------------------------------------------
+        self.reset = Signal()
+
         # Parameters/Locals ------------------------------------------------------------------------
         self.platform   = platform
         self.data_width = data_width
@@ -124,7 +127,7 @@ class MAIAHDLFFTWrapper(LiteXModule):
         self.ip_params.update(
             # Clk/Reset.
             i_clk      = ClockSignal(cd_domain),
-            i_rst      = ResetSignal(cd_domain),
+            i_rst      = (ResetSignal(cd_domain) | self.reset),
 
             # Input
             i_re_in    = self.re_in,
@@ -180,7 +183,7 @@ class MAIAHDLFFTWrapper(LiteXModule):
         self.sync += [
             If(source.last,
                self.source_first.eq(1),
-            ).Elif(source.valid,
+            ).Elif(source.valid | self.reset,
                self.source_first.eq(0),
             )
         ]
