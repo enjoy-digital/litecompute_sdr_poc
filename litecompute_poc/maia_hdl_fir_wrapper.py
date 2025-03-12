@@ -128,7 +128,7 @@ class MAIAHDLFIRWrapper(LiteXModule):
         self.ip_params.update(
             # Clk/Reset.
             i_clk                   = ClockSignal(cd_domain),
-            i_rst                   = ClockSignal(cd_domain),
+            i_rst                   = ResetSignal(cd_domain),
 
             # FIR Coefficient.
             i_coeff_wren            = self.coeff_wren,
