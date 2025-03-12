@@ -15,3 +15,6 @@ litepcie_util
 Module.symvers
 *.csv
 *.vcd
+.eggs
+*.egg-info
+*.swp

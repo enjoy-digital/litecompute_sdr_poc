@@ -142,9 +142,9 @@ class BaseSoC(SoCMini):
             self.pcie_dma0.source,
             self.tx_conv,
             self.fft,
-            self.rx_conv,
-            self.pcie_dma0.sink,
+            self.rx_conv.sink,
         )
+        self.comb += self.rx_conv.source.connect(self.pcie_dma0.sink, omit=["first", "last"])
 
         # Disables/clean FFT when no stream.
         self.comb += [
@@ -195,7 +195,7 @@ def main():
     # FFT Configuration.
     parser.add_argument("--with-window",    action="store_true",      help="Enable FFT Windowing.")
     parser.add_argument("--radix",          default=2,    type=int,   help="Radix 2/4.")
-    parser.add_argument("--fft-order-log2", default=10,   type=int,   help="Log2 of the FFT order.")
+    parser.add_argument("--fft-order-log2", default=5,    type=int,   help="Log2 of the FFT order.")
 
     # Litescope Analyzer Probes.
     probeopts = parser.add_mutually_exclusive_group()
