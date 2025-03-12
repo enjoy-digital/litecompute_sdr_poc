@@ -82,6 +82,33 @@ def read_sample_data_from_file(sample_file, data_width):
             samples.append((im << data_width) | (re))
     return samples
 
+def compute_fir_response(re_in, im_in, coefficients):
+    # Get lengths
+    signal_len = len(re_in)
+    coeff_len  = len(coefficients)
+    output_len = signal_len - coeff_len + 1
+
+    # Check if we have enough data
+    if signal_len < coeff_len:
+        return []
+
+    # Initialize output list
+    output = []
+
+    # Compute convolution manually
+    for i in range(output_len):
+        # Calculate one output sample (complex)
+        real_part = 0
+        imag_part = 0
+        for j in range(coeff_len):
+            # Multiply complex input by real coefficient
+            real_part += re_in[i + j] * coefficients[j]
+            imag_part += im_in[i + j] * coefficients[j]
+        output.append(real_part)
+        output.append(imag_part)
+
+    return output
+
 # IOs ----------------------------------------------------------------------------------------------
 
 _io = [
@@ -97,11 +124,10 @@ class Platform(SimPlatform):
 # Sim ----------------------------------------------------------------------------------------------
 
 class SimSoC(SoCCore):
-    def __init__(self, sys_clk_freq=int(200e6), data_width=12, stream_file=None,
-        with_window    = False,
-        radix          = 2,
-        fft_order_log2 = 10,
-        signal_freq    = 10e6,
+    def __init__(self, sys_clk_freq=int(200e6), data_in_width=16, data_out_width=16,
+        stream_file = None,
+        coeff_len   = 32,
+        signal_freq = 10e6,
         ):
 
         # Platform ---------------------------------------------------------------------------------
@@ -116,40 +142,32 @@ class SimSoC(SoCCore):
         SoCMini.__init__(self, platform, clk_freq=sys_clk_freq)
 
         # Signals ----------------------------------------------------------------------------------
-        re_out          = Signal((16, True))
-        im_out          = Signal((16, True))
+        re_out          = Signal((data_out_width, True))
+        im_out          = Signal((data_out_width, True))
         coeff_write_end = Signal()
 
         # MAIA HDL FIR Wrapper ---------------------------------------------------------------------
         self.fir = fir = MAIAHDLFIRWrapper(platform,
-            data_in_width  = data_width,
-            data_out_width = [16] * 3,
+            data_in_width  = data_in_width,
+            data_out_width = data_out_width,
             coeff_width    = 18,
-            decim_width    = [7, 6, 7],
-            oper_width     = [7, 6, 7],
-            macc_trunc     = [17, 18, 18],
+            decim_width    = 7,
+            oper_width     = 7,
+            macc_trunc     = 0, #19,
+            len_log2       = 8,
             cd_domain      = "sys",
             add_csr        = False,
         )
 
         self.comb += [
-            # Bypass.
-            fir.bypass2.eq(1),
-            fir.bypass3.eq(1),
-
             # Decimations.
-            fir.decimation1.eq(1),
-            fir.decimation2.eq(1),
-            fir.decimation3.eq(1),
+            fir.decimation.eq(1),
 
             # Operations minus one.
-            fir.operations_minus_one1.eq(32),
-            fir.operations_minus_one2.eq(0),
-            fir.operations_minus_one3.eq(0),
+            fir.operations_minus_one.eq(coeff_len // 2),
 
             # ODD Operations.
-            fir.odd_operations1.eq(0),
-            fir.odd_operations3.eq(0),
+            fir.odd_operations.eq(0),
         ]
 
         # FSM (Coeff write).
@@ -163,7 +181,7 @@ class SimSoC(SoCCore):
             NextValue(fir.coeff_waddr, fir.coeff_waddr + 1),
             fir.coeff_wdata.eq(1),
             fir.coeff_wren.eq(1),
-            If(fir.coeff_waddr == 1023,
+            If(fir.coeff_waddr == coeff_len - 1,
                NextState("END"),
             )
         )
@@ -172,31 +190,36 @@ class SimSoC(SoCCore):
         )
 
         self.comb += [
-            re_out.eq(fir.source.data[:16]),
-            im_out.eq(fir.source.data[16:]),
+            re_out.eq(fir.source.data[:data_out_width]),
+            im_out.eq(fir.source.data[data_out_width:]),
         ]
 
         # Streamer ---------------------------------------------------------------------------------
         if stream_file is None:
-            streamer_data = generate_sample_data(signal_freq, sys_clk_freq, 10000, data_width)
+            streamer_data = generate_sample_data(signal_freq, sys_clk_freq, 10000, data_in_width)
         else:
-            streamer_data = read_sample_data_from_file(stream_file, data_width)
+            streamer_data = read_sample_data_from_file(stream_file, data_in_width)
 
-        self.streamer = streamer = PacketStreamer(data_width * 2, streamer_data, 0)
+        self.streamer = streamer = PacketStreamer(data_in_width * 2, streamer_data, 0)
         self.comb += [
             streamer.source.connect(self.fir.sink, omit=["ready"]),
             streamer.source.ready.eq(fir.sink.ready & coeff_write_end),
         ]
+
+        # Checker ----------------------------------------------------------------------------------
+        re_part      = [i for i in range(0, len(streamer_data), 2)]
+        im_part      = [i for i in range(1, len(streamer_data), 2)]
+        checker_data = compute_fir_response(re_part, im_part, [1]*coeff_len)
+
+        self.checker = checker = PacketChecker(data_out_width, checker_data)
+
+        self.comb += fir.source.connect(checker.sink)
 
         # Sim Debug --------------------------------------------------------------------------------
         self.sync += If(fir.source.valid, Display("%d %d", re_out, im_out))
 
         # Sim Finish -------------------------------------------------------------------------------
         self.sync += If(streamer.source.last, Finish())
-        #self.sync += If(coeff_write_end, Finish())
-        #cycles = Signal(32)
-        #self.sync += cycles.eq(cycles + 1)
-        #self.sync += If(cycles == 1000, Finish())
 
 # Build --------------------------------------------------------------------------------------------
 
@@ -206,9 +229,6 @@ def main():
     parser.add_argument("--file",  default=None,        help="input stream file.")
 
     # FFT Configuration.
-    parser.add_argument("--with-window",    action="store_true",      help="Enable FFT Windowing.")
-    parser.add_argument("--radix",          default=2,    type=int,   help="Radix 2/4.")
-    parser.add_argument("--fft-order-log2", default=5,    type=int,   help="Log2 of the FFT order.")
     parser.add_argument("--signal-freq",    default=10e6, type=float, help="Input signal frequency.")
 
     args = parser.parse_args()
@@ -216,10 +236,7 @@ def main():
     sim_config = SimConfig(default_clk="sys_clk", default_clk_freq=int(1e6))
 
     soc = SimSoC(stream_file=args.file,
-        with_window    = args.with_window,
-        radix          = args.radix,
-        fft_order_log2 = args.fft_order_log2,
-        signal_freq    = args.signal_freq,
+        signal_freq = args.signal_freq,
     )
     builder = Builder(soc, output_dir="build/sim", csr_csv="csr.csv")
     builder.build(sim_config=sim_config, trace=args.trace, trace_fst=True)
