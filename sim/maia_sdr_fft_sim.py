@@ -63,6 +63,25 @@ def generate_sample_data(frequency, sample_rate, repetitions, data_width):
 
     return stream_data
 
+def read_sample_data_from_file(sample_file, data_width):
+    samples = []
+    i       = 0
+    with open(sample_file, 'rb') as f:
+        while True:
+            if i == 1000:
+                break
+            i+= 1
+            chunk = f.read(2)  # Read 16 bits (2 bytes)
+            if not chunk:
+                break
+            re = int.from_bytes(chunk, byteorder='little', signed=False)  # Convert to integer
+            chunk = f.read(2)  # Read 16 bits (2 bytes)
+            if not chunk:
+                break
+            im = int.from_bytes(chunk, byteorder='little', signed=False)  # Convert to integer
+            samples.append((im << data_width) | (re))
+    return samples
+
 # IOs ----------------------------------------------------------------------------------------------
 
 _io = [
@@ -79,7 +98,7 @@ class Platform(SimPlatform):
 # Sim ----------------------------------------------------------------------------------------------
 
 class SimSoC(SoCCore):
-    def __init__(self, sys_clk_freq=int(200e6), data_width=16,
+    def __init__(self, sys_clk_freq=int(200e6), data_width=16, stream_file=None,
         with_window    = False,
         radix          = 2,
         fft_order_log2 = 10,
@@ -125,7 +144,10 @@ class SimSoC(SoCCore):
         ]
 
         # Streamer ---------------------------------------------------------------------------------
-        streamer_data = generate_sample_data(signal_freq, sys_clk_freq, 10000, data_width)
+        if stream_file is None:
+            streamer_data = generate_sample_data(signal_freq, sys_clk_freq, 10000, data_width)
+        else:
+            streamer_data = read_sample_data_from_file(stream_file, data_width)
 
         self.streamer = streamer = PacketStreamer(data_width * 2, streamer_data, 8)
         self.comb += streamer.source.connect(self.fft.sink)
@@ -157,11 +179,12 @@ class SimSoC(SoCCore):
 def main():
     parser = argparse.ArgumentParser(description="MAIA SDR Simulation.")
     parser.add_argument("--trace", action="store_true", help="Enable VCD tracing.")
+    parser.add_argument("--file",  default=None,        help="input stream file.")
 
     # FFT Configuration.
     parser.add_argument("--with-window",    action="store_true",      help="Enable FFT Windowing.")
     parser.add_argument("--radix",          default=2,    type=int,   help="Radix 2/4.")
-    parser.add_argument("--fft-order-log2", default=10,   type=int,   help="Log2 of the FFT order.")
+    parser.add_argument("--fft-order-log2", default=5,    type=int,   help="Log2 of the FFT order.")
     parser.add_argument("--signal-freq",    default=10e6, type=float, help="Input signal frequency.")
 
     args = parser.parse_args()
@@ -170,7 +193,7 @@ def main():
     if args.with_window:
         sim_config.add_clocker("fft2x_clk", int(2e6))
 
-    soc = SimSoC(
+    soc = SimSoC(stream_file=args.file,
         with_window    = args.with_window,
         radix          = args.radix,
         fft_order_log2 = args.fft_order_log2,
