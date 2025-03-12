@@ -51,7 +51,7 @@ class PacketStreamer(LiteXModule):
 class PacketChecker(Module):
     def __init__(self, data_width, datas, with_framing_error=True):
         self.data_width    = data_width
-        self.sink          = sink = AXIStreamInterface(data_width, clock_domain="sys")
+        self.sink          = sink = stream.Endpoint([("data", data_width)])
         self.data_error    = Signal()
         self.data_ok       = Signal()
         self.framing_error = Signal()
