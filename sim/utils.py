@@ -6,6 +6,11 @@ from litex.gen.genlib.misc import timeline, WaitTimer
 
 from litex.soc.interconnect import stream
 
+# Utils --------------------------------------------------------------------------------------------
+def clamp_nbits(x, nbits):
+    offset = 2**(nbits - 1)
+    return ((x + offset) % 2**nbits) - offset
+
 # Packer Streamer ----------------------------------------------------------------------------------
 
 class PacketStreamer(LiteXModule):
