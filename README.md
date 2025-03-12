@@ -140,3 +140,70 @@ options:
   --signal-freq SIGNAL_FREQ
                         Input signal frequency.
 ```
+
+## Using Core with acorn baseboard
+
+A ready to uses targets is available in the *targets* directory:
+```bash
+./targets/acorn.py --help
+usage: acorn.py [-h] [--build] [--load] [--flash] [--variant VARIANT] [--programmer {openocd,openfpgaloader}] [--with-window] [--radix RADIX] [--fft-order-log2 FFT_ORDER_LOG2] [--with-fft-datapath-probe]
+
+LiteX SoC on Acorn CLE-101/215(+).
+
+options:
+  -h, --help            show this help message and exit
+  --build               Build bitstream
+  --load                Load bitstream
+  --flash               Flash bitstream.
+  --variant VARIANT     Board variant (cle-215+, cle-215 or cle-101).
+  --programmer {openocd,openfpgaloader}
+                        Programmer select from OpenOCD/openFPGALoader.
+  --with-window         Enable FFT Windowing.
+  --radix RADIX         Radix 2/4.
+  --fft-order-log2 FFT_ORDER_LOG2
+                        Log2 of the FFT order.
+  --with-fft-datapath-probe
+                        Enable FFT Datapath Probe.
+```
+
+This target performs `PCIe` -> `FFT` -> `PCIe` processing.
+
+### Preparing Complex Samples
+
+The *software/user* directory contains the script *gen_lut.py*, which generates lookup table data:
+```bash
+./software/user/gen_lut.py --help
+usage: gen_lut.py [-h] [--signal-freq SIGNAL_FREQ] [--sample-rate SAMPLE_RATE] [--repetitions REPETITIONS] [--data-width DATA_WIDTH]
+```
+
+with:
+- `--signal-freq` Frequency of the sine wave
+- `--sample-rate` Sample frequency, used with `signal-freq` to compute steps for real and imaginary parts
+- `--repetitions` number of periods
+- `--data-width` sample size
+
+The generated signal is stored in a file called  `data.bin`.
+
+### Sending and Receiving Data
+
+In the *software/user* directory:
+
+- Start recording (Terminal 1):
+  `./litepcie_test record output.bin 4000`
+- Play the generated signal (Terminal 2):
+  `./litepcie_test play data.bin 100`
+
+
+**Important:** The FFT process is not synchronized with the data stream, so
+`record` must be started before `play`.
+
+### Displaying Results
+
+In *software/user*
+```bash
+./display_fft.py --dump-file FILE [--fs]  [--fft-order]
+```
+With:
+- `--dump-file` the file produces by `litepcie_test record`
+- `--fs` the sample frequency (default: 100e6)
+- `--fft-order` FFT order (default: 32)
