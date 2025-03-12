@@ -56,6 +56,7 @@ def fft_generator(output_path, data_width=12, order_log2=12, radix=4, window=Non
                 ports=ports, platform=platform,
                 emit_src=False))
     print('wrote verilog to', file_out)
+    print(f"Delay: {m.delay}")
 
 # MAIAHDLFFTWrapper --------------------------------------------------------------------------------
 
@@ -178,15 +179,31 @@ class MAIAHDLFFTWrapper(LiteXModule):
             sink.ready.eq(1),
             source.first.eq(self.source_first),
         ]
-        self.sync += source.valid.eq(sink.valid)
 
         self.sync += [
             If(source.last,
                self.source_first.eq(1),
-            ).Elif(source.valid | self.reset,
+            ).Elif(source.valid,
                self.source_first.eq(0),
-            )
+            ),
+            If(self.reset,
+               self.source_first.eq(0),
+            ),
         ]
+
+        self.fsm = fsm = FSM(reset_state="IDLE")
+        fsm.act("IDLE",
+            NextValue(source.valid, 0),
+            If(source.last,
+               NextState("TRANSMIT")
+            )
+        )
+        fsm.act("TRANSMIT",
+            NextValue(source.valid, sink.valid),
+            If(self.reset,
+               NextState("IDLE"),
+            )
+        )
 
         # Reconstruct samples.
         self.comb += [
