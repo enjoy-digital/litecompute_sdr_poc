@@ -23,7 +23,7 @@ fs      = 100e6    # Sampling frequency
 re_in   = []
 im_in   = []
 last_in = []
-N       = 1024
+N       = 32
 
 samples = read_binary_file("toto.bin")
 
@@ -37,9 +37,9 @@ freq_raw = np.arange(N) * (fs/2 / N)
 
 
 plt.figure(figsize=(12, 6))
-for i in range(0*1024, len(re_in)-1024, 1024):
-    real     = np.array(re_in[i: i + 1024])
-    imag     = np.array(im_in[i: i + 1024])
+for i in range(1*N, len(re_in)-N, N):
+    real     = np.array(re_in[i: i + N])
+    imag     = np.array(im_in[i: i + N])
     fft_data = real + 1j * imag
     # Magnitude of FFT
     magnitude = np.abs(fft_data)
