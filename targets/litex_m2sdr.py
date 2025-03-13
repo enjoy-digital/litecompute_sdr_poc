@@ -557,6 +557,23 @@ class BaseSoC(SoCMini):
             csr_csv      = "analyzer.csv"
         )
 
+    def add_fft_datapath_probe(self):
+        analyzer_signals = [
+            self.fft.sink,
+            self.fft.source,
+            self.fft.re_in,
+            self.fft.im_in,
+            self.fft.re_out,
+            self.fft.im_out,
+        ]
+
+        self.analyzer = LiteScopeAnalyzer(analyzer_signals,
+            depth        = 1024,
+            clock_domain = "sys",
+            register     = True,
+            csr_csv      = "analyzer.csv"
+        )
+
 # Build --------------------------------------------------------------------------------------------
 
 def main():
@@ -593,6 +610,7 @@ def main():
     probeopts.add_argument("--with-ad9361-data-probe",     action="store_true", help="Enable AD9361 Data Probe.")
     probeopts.add_argument("--with-pcie-dma-probe",        action="store_true", help="Enable PCIe DMA Probe.")
     probeopts.add_argument("--with-eth-tx-probe",          action="store_true", help="Enable Ethernet Tx Probe.")
+    probeopts.add_argument("--with-fft-datapath-probe",    action="store_true", help="Enable FFT Datapath Probe.")
 
     args = parser.parse_args()
 
@@ -628,6 +646,8 @@ def main():
         soc.add_pcie_dma_probe()
     if args.with_eth_tx_probe:
         soc.add_eth_tx_probe()
+    if args.with_fft_datapath_probe:
+        soc.add_fft_datapath_probe()
 
     # Builder.
     def get_build_name():
@@ -642,7 +662,7 @@ def main():
     builder.build(build_name=get_build_name(), run=args.build)
 
     # Generate LitePCIe Driver.
-    generate_litepcie_software(soc, "software", use_litepcie_software=args.driver)
+    generate_litepcie_software(soc, "software_m2sdr", use_litepcie_software=args.driver)
 
     # Load Bistream.
     if args.load:
@@ -662,7 +682,7 @@ def main():
 
     # Rescan PCIe Bus.
     if args.rescan:
-        subprocess.run("sudo sh -c 'cd software && ./rescan.py'", shell=True)
+        subprocess.run("sudo sh -c 'cd software_m2sdr && ./rescan.py'", shell=True)
 
 if __name__ == "__main__":
     main()
