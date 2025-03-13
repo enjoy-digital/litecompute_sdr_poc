@@ -388,8 +388,10 @@ class BaseSoC(SoCMini):
         # ------------------
         self.comb += [
             self.header.tx.source.connect(self.ad9361.sink),
-            self.ad9361.source.connect(self.header.rx.sink),
+            self.ad9361.source.connect(self.header.rx.sink, omit=["ready"]),
         ]
+        if not with_fft:
+            self.comb += self.ad9361.source.ready.eq(self.header.rx.sink.ready)
 
         # Crossbar.
         # ---------
@@ -481,11 +483,15 @@ class BaseSoC(SoCMini):
             # PCIe <-> MAIAHDLFFTWrapper.
             # ---------------------------
 
+            #self.tx_conv = stream.Converter(64, 32)
             self.tx_conv = ResetInserter()(stream.Converter(64, 32))
             # FIXME: FFT output size is not always == input size
             self.rx_conv = ResetInserter()(stream.Converter(32, 64))
 
-            self.ad9361.source.connect(self.tx_conv.sink, omit=["ready"])
+            self.comb += [
+                self.ad9361.source.connect(self.tx_conv.sink, omit=["ready"]),
+                self.ad9361.source.ready.eq(self.tx_conv.sink.ready | self.header.rx.sink.ready),
+            ]
 
             self.pipeline = stream.Pipeline(
                 self.tx_conv.source,
@@ -497,12 +503,10 @@ class BaseSoC(SoCMini):
             # Disables/clean FFT when no stream.
             self.comb += [
                 self.fft.reset.eq(~self.pcie_dma1.writer.enable),
+                self.fft.reset2.eq(~self.pcie_dma1.reader.enable),
                 self.tx_conv.reset.eq(~self.pcie_dma1.writer.enable),
                 self.rx_conv.reset.eq(~self.pcie_dma1.writer.enable),
             ]
-
-
-
 
     # LiteScope Probes (Debug) ---------------------------------------------------------------------
 
@@ -565,6 +569,8 @@ class BaseSoC(SoCMini):
             self.fft.im_in,
             self.fft.re_out,
             self.fft.im_out,
+            self.fft.reset,
+            self.fft.reset2,
         ]
 
         self.analyzer = LiteScopeAnalyzer(analyzer_signals,
