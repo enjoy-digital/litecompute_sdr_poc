@@ -82,7 +82,8 @@ def read_sample_data_from_file(sample_file, data_width):
             if not chunk:
                 break
             im = int.from_bytes(chunk, byteorder='little', signed=False)  # Convert to integer
-            samples.append((im << data_width) | (re))
+            #samples.append((im << data_width) | (re))
+            samples.append((1 << data_width) | 1)
     return samples
 
 def model(macc_trunc, ow, taps, decimation, re_in, im_in):
@@ -152,10 +153,13 @@ class Platform(SimPlatform):
 
 class SimSoC(SoCCore):
     def __init__(self, sys_clk_freq=int(200e6), data_in_width=16, data_out_width=16,
-        stream_file = None,
-        coeff_len   = 32,
-        len_log2    = 8,
-        signal_freq = 10e6,
+        stream_file           = None,
+        coeff_len             = 32,
+        len_log2              = 8,
+        signal_freq           = 10e6,
+        with_etherbone        = False,
+        etherbone_mac_address = 0x10e2d5000001,
+        etherbone_ip_address  = "192.168.1.51",
         ):
 
         # Platform ---------------------------------------------------------------------------------
@@ -206,21 +210,24 @@ class SimSoC(SoCCore):
             NextState("TRANSMIT")
         )
         fsm.act("TRANSMIT",
-            NextValue(fir.coeff_waddr, fir.coeff_waddr + 1),
-            If((fir.coeff_waddr < coeff_len // 2),
-                fir.coeff_wdata.eq(1),
-            ).Elif((fir.coeff_waddr > 127) & (fir.coeff_waddr < 144),
+            fir.coeff_wren.eq(1),
+            If((fir.coeff_waddr[:-1] < coeff_len // 2),
                 fir.coeff_wdata.eq(1),
             ).Else(
                 fir.coeff_wdata.eq(0),
             ),
-            fir.coeff_wren.eq(1),
+            NextState("WAIT"),
+        )
+        fsm.act("WAIT",
+            NextValue(fir.coeff_waddr, fir.coeff_waddr + 1),
             If(fir.coeff_waddr == (2**len_log2) - 1,
                NextState("END"),
-            )
+            ).Else(
+                NextState("TRANSMIT"),
+            ),
         )
         fsm.act("END",
-           coeff_write_end.eq(1),
+            coeff_write_end.eq(1),
         )
 
         self.comb += [
@@ -262,49 +269,58 @@ class SimSoC(SoCCore):
             fir.source.ready.eq(checker.sink.ready & coeff_write_end),
         ]
 
-        # Etherbone
-        #self.ethphy = LiteEthPHYModel(self.platform.request("eth", 0))
-        #self.add_etherbone( 
-        #    phy         = self.ethphy,
-        #    ip_address  = "192.168.1.51",
-        #    mac_address = 0x10e2d5000001,
-        #    data_width  = 32,
-        #    with_ethmac = False,
-        #)
+        # Etherbone --------------------------------------------------------------------------------
+        if with_etherbone:
+            self.ethphy = LiteEthPHYModel(self.platform.request("eth", 0))
+            self.add_etherbone(
+                phy         = self.ethphy,
+                ip_address  = etherbone_ip_address,
+                mac_address = etherbone_mac_address,
+                data_width  = 8,
+                with_ethmac = False,
+            )
 
-        #self._coeff_ctrl = CSRStorage(description="Control Registers.", fields=[
-        #    CSRField("coeff_write_end", size=1, offset=0, description="End Of Coefficient load.")
-        #])
-        #self.comb += coeff_write_end.eq(self._coeff_ctrl.fields.coeff_write_end)
+            self._coeff_ctrl = CSRStorage(description="Control Registers.", fields=[
+                CSRField("coeff_write_end", size=1, offset=0, description="End Of Coefficient load.")
+            ])
+            #self.comb += coeff_write_end.eq(self._coeff_ctrl.fields.coeff_write_end)
 
         # Sim Debug --------------------------------------------------------------------------------
         self.sync += If(fir.source.valid, Display("%d %d", re_out, im_out))
 
         # Sim Finish -------------------------------------------------------------------------------
-        #self.sync += If(streamer.source.last, Finish())
-        ##self.sync += If(coeff_write_end, Finish())
-        cycles = Signal(32)
-        ##self.sync += cycles.eq(cycles + 1)
-        self.sync += If(cycles == 1000, Finish())
+        if not with_etherbone:
+            self.sync += If(streamer.source.last, Finish())
+        else:
+            ##self.sync += If(coeff_write_end, Finish())
+            cycles = Signal(32)
+            ##self.sync += cycles.eq(cycles + 1)
+            self.sync += If(cycles == 1000, Finish())
 
 # Build --------------------------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(description="MAIA SDR Simulation.")
-    parser.add_argument("--trace",     action="store_true",     help="Enable VCD tracing.")
-    parser.add_argument("--file",      default=None,            help="input stream file.")
-    parser.add_argument("--remote-ip", default="192.168.1.100", help="Remote IP address of TFTP server.")
+    parser.add_argument("--trace",          action="store_true",     help="Enable VCD tracing.")
+    parser.add_argument("--file",           default=None,            help="input stream file.")
 
-    # FFT Configuration.
+    # Ethernet /Etherbone.
+    parser.add_argument("--with-etherbone", action="store_true",     help="Enable Etherbone support.")
+    parser.add_argument("--remote-ip",      default="192.168.1.100", help="Remote IP address of TFTP server.")
+
+    # FIR Configuration.
     parser.add_argument("--signal-freq",    default=10e6, type=float, help="Input signal frequency.")
 
     args = parser.parse_args()
 
     sim_config = SimConfig(default_clk="sys_clk", default_clk_freq=int(1e6))
-    #sim_config.add_module("ethernet", "eth", args={"interface": "tap0", "ip": args.remote_ip})
+    if args.with_etherbone:
+        sim_config.add_module("ethernet", "eth", args={"interface": "tap0", "ip": args.remote_ip})
 
     soc = SimSoC(stream_file=args.file,
-        signal_freq = args.signal_freq,
+        signal_freq          = args.signal_freq,
+        with_etherbone       = args.with_etherbone,
+        etherbone_ip_address = args.remote_ip,
     )
     builder = Builder(soc, output_dir="build/sim", csr_csv="csr.csv")
     builder.build(sim_config=sim_config,
