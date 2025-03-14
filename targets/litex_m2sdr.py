@@ -483,7 +483,6 @@ class BaseSoC(SoCMini):
             # PCIe <-> MAIAHDLFFTWrapper.
             # ---------------------------
 
-            #self.tx_conv = stream.Converter(64, 32)
             self.tx_conv = ResetInserter()(stream.Converter(64, 32))
             # FIXME: FFT output size is not always == input size
             self.rx_conv = ResetInserter()(stream.Converter(32, 64))
@@ -503,7 +502,6 @@ class BaseSoC(SoCMini):
             # Disables/clean FFT when no stream.
             self.comb += [
                 self.fft.reset.eq(~self.pcie_dma1.writer.enable),
-                self.fft.reset2.eq(~self.pcie_dma1.reader.enable),
                 self.tx_conv.reset.eq(~self.pcie_dma1.writer.enable),
                 self.rx_conv.reset.eq(~self.pcie_dma1.writer.enable),
             ]
@@ -570,7 +568,6 @@ class BaseSoC(SoCMini):
             self.fft.re_out,
             self.fft.im_out,
             self.fft.reset,
-            self.fft.reset2,
         ]
 
         self.analyzer = LiteScopeAnalyzer(analyzer_signals,
