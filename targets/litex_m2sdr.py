@@ -149,7 +149,8 @@ class BaseSoC(SoCMini):
         with_sata     = False, sata_gen="gen2",
         with_jtagbone = True,
         with_rfic_oversampling = True,
-        with_fft      = False,
+        with_fft        = False,
+        with_fft_window = False,
     ):
         # Platform ---------------------------------------------------------------------------------
 
@@ -466,35 +467,45 @@ class BaseSoC(SoCMini):
 
         # MAIA HDL FFT Wrapper ---------------------------------------------------------------------
         if with_fft:
-            with_window    = False
             fft_order_log2 = 10
             radix          = 2
             self.fft = MAIAHDLFFTWrapper(platform,
                 data_width  = 16,
                 order_log2  = fft_order_log2,
                 radix       = radix,
-                window      = {True: "blackmanharris", False: None}[with_window],
+                window      = {True: "blackmanharris", False: None}[with_fft_window],
                 cmult3x     = False,
                 cd_domain   = "sys",
-                cd_domain2x = "sys2x",
+                cd_domain2x = "fft_2x",
                 cd_domain3x = "fft_3x",
             )
+
+            # Window Clocking.
+            # ----------------
+            if with_fft_window:
+                self.cd_fft_2x = ClockDomain()
+
+                self.crg.pll.create_clkout(self.cd_fft_2x, sys_clk_freq * 2)
 
             # PCIe <-> MAIAHDLFFTWrapper.
             # ---------------------------
 
-            self.tx_conv = ResetInserter()(stream.Converter(64, 32))
+            #self.tx_conv = ResetInserter()(stream.Converter(64, 32))
             # FIXME: FFT output size is not always == input size
             self.rx_conv = ResetInserter()(stream.Converter(32, 64))
 
             self.comb += [
-                self.ad9361.source.connect(self.tx_conv.sink, omit=["ready"]),
-                self.ad9361.source.ready.eq(self.tx_conv.sink.ready | self.header.rx.sink.ready),
+                self.ad9361.source.connect(self.fft.sink, omit=["ready"]),
+                self.ad9361.source.ready.eq(self.fft.sink.ready | self.header.rx.sink.ready),
+                self.fft.sink.data.eq(self.ad9361.source.data[:32]), # Only keep first channel (testmode)
+
+                # Disable DMA1 synchronizer.
+                self.pcie_dma1.synchronizer.pps.eq(1),
             ]
 
             self.pipeline = stream.Pipeline(
-                self.tx_conv.source,
-                self.fft,
+                #self.tx_conv.source,
+                self.fft.source,
                 self.rx_conv.sink,
             )
             self.comb += self.rx_conv.source.connect(self.pcie_dma1.sink, omit=["first", "last"])
@@ -502,7 +513,7 @@ class BaseSoC(SoCMini):
             # Disables/clean FFT when no stream.
             self.comb += [
                 self.fft.reset.eq(~self.pcie_dma1.writer.enable),
-                self.tx_conv.reset.eq(~self.pcie_dma1.writer.enable),
+                #self.tx_conv.reset.eq(~self.pcie_dma1.writer.enable),
                 self.rx_conv.reset.eq(~self.pcie_dma1.writer.enable),
             ]
 
@@ -606,6 +617,7 @@ def main():
 
     # FFT parameters.
     parser.add_argument("--with-fft",        action="store_true",     help="Enable FFT Module.")
+    parser.add_argument("--with-fft-window", action="store_true",     help="Enable FFT Window.")
 
     # Litescope Analyzer Probes.
     probeopts = parser.add_mutually_exclusive_group()
@@ -637,7 +649,8 @@ def main():
         with_sata     = args.with_sata,
 
         # FFT.
-        with_fft      = args.with_fft,
+        with_fft        = args.with_fft,
+        with_fft_window = args.with_fft_window,
     )
 
     # LiteScope Analyzer Probes.
