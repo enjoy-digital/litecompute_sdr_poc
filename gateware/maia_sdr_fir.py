@@ -72,8 +72,8 @@ class MaiaSDRFIR(LiteXModule):
         oper_width     = 7,
         macc_trunc     = 19,
         len_log2       = 8,
-        clk_domain      = "sys",
-        add_csr        = True,
+        clk_domain     = "sys",
+        with_csr       = True,
         ):
 
         # Streams ----------------------------------------------------------------------------------
@@ -160,10 +160,10 @@ class MaiaSDRFIR(LiteXModule):
             self.source.data.eq(Cat(self.re_out, self.im_out)),
         ]
 
-        if add_csr:
-            self.add_csr()
+        if with_csr:
+            self.with_csr()
 
-    def add_csr(self):
+    def with_csr(self):
         self._cfg = CSRStorage(description="Configuration Register.", fields=[
             CSRField("odd_operations", size=1, offset=0,         description="ODD Operation"),
         ])

@@ -188,7 +188,7 @@ class SimSoC(SoCCore):
             macc_trunc     = 0, #19,
             len_log2       = len_log2,
             clk_domain     = "sys",
-            add_csr        = False,
+            with_csr       = False,
         )
 
         self.comb += [
