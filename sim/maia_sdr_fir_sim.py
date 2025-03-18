@@ -34,7 +34,7 @@ sys.path.append("..")
 
 from utils import PacketStreamer, PacketChecker, clamp_nbits
 
-from litecompute_poc.maia_sdr_fir import MaiaSDRFIR
+from gateware.maia_sdr_fir import MaiaSDRFIR
 
 # Utils --------------------------------------------------------------------------------------------
 def two_complement_encode(value, bits):

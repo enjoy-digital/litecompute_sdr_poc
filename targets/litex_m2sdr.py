@@ -59,7 +59,7 @@ from gateware.measurement import MultiClkMeasurement
 
 from software import generate_litepcie_software
 
-from litecompute_poc.maia_sdr_fft import MaiaSDRFFT
+from gateware.maia_sdr_fft import MaiaSDRFFT
 
 # CRG ----------------------------------------------------------------------------------------------
 

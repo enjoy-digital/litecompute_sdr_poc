@@ -33,7 +33,7 @@ from liteeth.phy.a7_gtp import QPLLSettings, QPLL
 
 from litescope import LiteScopeAnalyzer
 
-from litecompute_poc.maia_sdr_fft import MaiaSDRFFT
+from gateware.maia_sdr_fft import MaiaSDRFFT
 
 # CRG ----------------------------------------------------------------------------------------------
 

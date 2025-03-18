@@ -31,7 +31,7 @@ sys.path.append("..")
 
 from utils import PacketStreamer, PacketChecker
 
-from litecompute_poc.maia_sdr_fft import MaiaSDRFFT
+from gateware.maia_sdr_fft import MaiaSDRFFT
 
 # Utils --------------------------------------------------------------------------------------------
 def two_complement_encode(value, bits):
