@@ -174,8 +174,6 @@ class SimSoC(SoCCore):
         SoCMini.__init__(self, platform, clk_freq=sys_clk_freq)
 
         # Signals ----------------------------------------------------------------------------------
-        re_out          = Signal((data_out_width, True))
-        im_out          = Signal((data_out_width, True))
         coeff_write_end = Signal()
 
         # MAIA SDR FIR -----------------------------------------------------------------------------
@@ -230,11 +228,6 @@ class SimSoC(SoCCore):
             coeff_write_end.eq(1),
         )
 
-        self.comb += [
-            re_out.eq(fir.source.data[:data_out_width]),
-            im_out.eq(fir.source.data[data_out_width:]),
-        ]
-
         # Streamer ---------------------------------------------------------------------------------
         if stream_file is None:
             streamer_data = generate_sample_data(signal_freq, sys_clk_freq, 10000, data_in_width)
@@ -243,9 +236,11 @@ class SimSoC(SoCCore):
 
         self.streamer = streamer = PacketStreamer(data_in_width * 2, streamer_data, 0)
         self.comb += [
-            streamer.source.connect(self.fir.sink, omit=["ready", "valid"]),
+            streamer.source.connect(self.fir.sink, omit=["ready", "valid", "data"]),
             streamer.source.ready.eq(fir.sink.ready & coeff_write_end),
             fir.sink.valid.eq(streamer.source.valid & coeff_write_end),
+            fir.sink.re.eq(streamer.source.data[:data_out_width]),
+            fir.sink.im.eq(streamer.source.data[data_out_width:]),
         ]
 
         # Checker ----------------------------------------------------------------------------------
@@ -265,8 +260,9 @@ class SimSoC(SoCCore):
         #checker.add_debug("FIR")
 
         self.comb += [
-            fir.source.connect(checker.sink, omit=["ready"]),
+            fir.source.connect(checker.sink, omit=["ready", "re", "im"]),
             fir.source.ready.eq(checker.sink.ready & coeff_write_end),
+            checker.sink.data.eq(Cat(fir.source.re, fir.source.im)),
         ]
 
         # Etherbone --------------------------------------------------------------------------------
@@ -286,7 +282,7 @@ class SimSoC(SoCCore):
             #self.comb += coeff_write_end.eq(self._coeff_ctrl.fields.coeff_write_end)
 
         # Sim Debug --------------------------------------------------------------------------------
-        self.sync += If(fir.source.valid, Display("%d %d", re_out, im_out))
+        self.sync += If(fir.source.valid, Display("%d %d", fir.source.re, fir.source.im))
 
         # Sim Finish -------------------------------------------------------------------------------
         if not with_etherbone:

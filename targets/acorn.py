@@ -136,16 +136,23 @@ class BaseSoC(SoCMini):
         # FIXME: FFT output size is not always == input size
         self.rx_conv = ResetInserter()(stream.Converter(32, 64))
 
-        self.pipeline = stream.Pipeline(
-            self.pcie_dma0.source,
-            self.tx_conv,
-            self.fft,
-            self.rx_conv.sink,
-        )
-        self.comb += self.rx_conv.source.connect(self.pcie_dma0.sink, omit=["first", "last"])
-
-        # Disables/clean FFT when no stream.
         self.comb += [
+            # PCIe DMA0 Source -> Converter.
+            self.pcie_dma0.source.connect(self.tx_conv.sink),
+
+            # Converter -> FFT
+            self.tx_conv.source.connect(self.fft.sink, omit=["data"]),
+            self.fft.sink.re.eq(self.tx_conv.source.data[:16]),
+            self.fft.sink.im.eq(self.tx_conv.source.data[16:]),
+
+            # FFt -> Converter.
+            self.fft.source.connect(self.rx_conv.sink, omit=["re", "im"]),
+            self.rx_conv.sink.data.eq(Cat(self.fft.source.re, self.fft.source.im)),
+
+            # Converter -> DMA0 Sink.
+            self.rx_conv.source.connect(self.pcie_dma0.sink, omit=["first", "last"]),
+
+            # Disables/clear FFT when no stream.
             self.fft.reset.eq(~self.pcie_dma0.reader.enable),
             self.tx_conv.reset.eq(~self.pcie_dma0.reader.enable),
             self.rx_conv.reset.eq(~self.pcie_dma0.reader.enable),

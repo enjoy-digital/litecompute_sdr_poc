@@ -76,8 +76,8 @@ class MaiaSDRFIR(LiteXModule):
         ):
 
         # Streams ----------------------------------------------------------------------------------
-        self.sink   = sink          = stream.Endpoint([("data", 2 * data_in_width)])
-        self.source = source        = stream.Endpoint([("data", 2 * data_out_width[-1])])
+        self.sink   = sink          = stream.Endpoint([("re", data_in_width), ("im", data_in_width)])
+        self.source = source        = stream.Endpoint([("re", data_out_width), ("im", data_out_width)])
 
         # Parameters/Locals ------------------------------------------------------------------------
         self.platform               = platform
@@ -113,13 +113,6 @@ class MaiaSDRFIR(LiteXModule):
 
         # # #
 
-        # Signals.
-        # --------
-        self.re_in        = Signal(data_in_width)
-        self.im_in        = Signal(data_in_width)
-        self.re_out       = Signal(data_out_width[-1])
-        self.im_out       = Signal(data_out_width[-1])
-
         # FIR Instance -----------------------------------------------------------------------------
 
         self.ip_name   = "fir"
@@ -152,29 +145,18 @@ class MaiaSDRFIR(LiteXModule):
             i_odd_operations3       = self.odd_operations3,
 
             # Input
-            i_re_in                 = self.re_in,
-            i_im_in                 = self.im_in,
+            i_re_in                 = sink.re,
+            i_im_in                 = sink.im,
             i_in_valid              = sink.valid,
             o_in_ready              = sink.ready,
 
             # Output
-            o_re_out                = self.re_out,
-            o_im_out                = self.im_out,
+            o_re_out                = source.re,
+            o_im_out                = source.im,
             o_strobe_out            = source.valid,
         )
 
         self.specials += Instance(self.ip_name, **self.ip_params)
-
-        # Logic ------------------------------------------------------------------------------------
-
-        # Reconstruct samples.
-        self.comb += [
-            # Input.
-            self.re_in.eq(self.sink.data[:data_in_width]),
-            self.im_in.eq(self.sink.data[data_in_width:]),
-            # Output.
-            self.source.data.eq(Cat(self.re_out, self.im_out)),
-        ]
 
         if with_csr:
             self.with_csr()

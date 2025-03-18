@@ -86,8 +86,8 @@ class MaiaSDRFFT(LiteXModule):
         self.out_width = out_width = widths[-1]
 
         # Streams ----------------------------------------------------------------------------------
-        self.sink   = sink   = stream.Endpoint([("data", 2 * data_width)])
-        self.source = source = stream.Endpoint([("data", 2 * (out_width))])
+        self.sink   = sink   = stream.Endpoint([("re", data_width), ("im", data_width)])
+        self.source = source = stream.Endpoint([("re", out_width), ("im", out_width)])
 
         # Signals ----------------------------------------------------------------------------------
         self.reset = Signal()
@@ -106,13 +106,6 @@ class MaiaSDRFFT(LiteXModule):
         assert window  in [None, 'blackmanharris']
         assert cmult3x in [False, True]
 
-        # Signals.
-        # --------
-        self.re_in        = Signal(data_width)
-        self.im_in        = Signal(data_width)
-        self.re_out       = Signal(self.out_width)
-        self.im_out       = Signal(self.out_width)
-
         self.ip_name = "fft_radix{radix}_{window}{cmult3x}".format(
             radix   = radix,
             window  = {True: "nowindow", False: "blackmanharris"}[window is None],
@@ -128,13 +121,13 @@ class MaiaSDRFFT(LiteXModule):
             i_rst      = (ResetSignal(clk_domain) | self.reset),
 
             # Input
-            i_re_in    = self.re_in,
-            i_im_in    = self.im_in,
+            i_re_in    = self.sink.re,
+            i_im_in    = self.sink.im,
             i_clken    = self.sink.valid,
 
             # Output
-            o_re_out   = self.re_out,
-            o_im_out   = self.im_out,
+            o_re_out   = self.source.re,
+            o_im_out   = self.source.im,
             o_out_last = self.source.last,
         )
 
@@ -187,15 +180,6 @@ class MaiaSDRFFT(LiteXModule):
                NextState("IDLE"),
             )
         )
-
-        # Reconstruct samples.
-        self.comb += [
-            # Input.
-            self.re_in.eq(self.sink.data[:data_width]),
-            self.im_in.eq(self.sink.data[data_width:]),
-            # Output.
-            self.source.data.eq(Cat(self.re_out, self.im_out)),
-        ]
 
     def do_finalize(self):
         src_dir  = os.path.join(self.platform.output_dir, "maia_hdl_fft")

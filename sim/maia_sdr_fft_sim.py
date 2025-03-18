@@ -137,8 +137,8 @@ class SimSoC(SoCCore):
         im_out = Signal((self.fft.out_width, True))
 
         self.comb += [
-            re_out.eq(self.fft.source.data[:self.fft.out_width]),
-            im_out.eq(self.fft.source.data[self.fft.out_width:]),
+            re_out.eq(self.fft.source.re),
+            im_out.eq(self.fft.source.im),
         ]
 
         # Streamer ---------------------------------------------------------------------------------
@@ -148,7 +148,11 @@ class SimSoC(SoCCore):
             streamer_data = read_sample_data_from_file(stream_file, data_width)
 
         self.streamer = streamer = PacketStreamer(data_width * 2, streamer_data, 8)
-        self.comb += streamer.source.connect(self.fft.sink)
+        self.comb += [
+            streamer.source.connect(self.fft.sink, omit=["data"]),
+            self.fft.sink.re.eq(streamer.source.data[:data_width]),
+            self.fft.sink.im.eq(streamer.source.data[data_width:]),
+        ]
 
         # Sim Debug --------------------------------------------------------------------------------
         self.sync += If(self.fft.source.valid, Display("%d %d %d", re_out, im_out, self.fft.source.last))

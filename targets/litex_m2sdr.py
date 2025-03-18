@@ -493,23 +493,23 @@ class BaseSoC(SoCMini):
             self.rx_conv = ResetInserter()(stream.Converter(32, 64))
 
             self.comb += [
-                self.ad9361.source.connect(self.fft.sink, omit=["ready"]),
+                # RFIC -> FFT.
+                self.ad9361.source.connect(self.fft.sink, omit=["ready", "data"]),
                 self.ad9361.source.ready.eq(self.fft.sink.ready | self.header.rx.sink.ready),
-                self.fft.sink.data.eq(self.ad9361.source.data[:32]), # Only keep first channel (testmode)
+                self.fft.sink.re.eq(self.ad9361.source.data[:16]), # Only keep first channel (testmode)
+                self.fft.sink.im.eq(self.ad9361.source.data[16:]), # Only keep first channel (testmode)
+
+                # FFT -> Converter.
+                self.fft.source.connect(self.rx_conv.sink, omit=["re", "im"]),
+                self.rx_conv.sink.data.eq(Cat(self.fft.source.re, self.fft.source.im)),
+
+                # Converter -> PCIe DMA1 Source.
+                self.rx_conv.source.connect(self.pcie_dma1.sink, omit=["first", "last"]),
 
                 # Disable DMA1 synchronizer.
                 self.pcie_dma1.synchronizer.pps.eq(1),
-            ]
 
-            self.pipeline = stream.Pipeline(
-                #self.tx_conv.source,
-                self.fft.source,
-                self.rx_conv.sink,
-            )
-            self.comb += self.rx_conv.source.connect(self.pcie_dma1.sink, omit=["first", "last"])
-
-            # Disables/clean FFT when no stream.
-            self.comb += [
+                # Disables/clear FFT when no stream.
                 self.fft.reset.eq(~self.pcie_dma1.writer.enable),
                 #self.tx_conv.reset.eq(~self.pcie_dma1.writer.enable),
                 self.rx_conv.reset.eq(~self.pcie_dma1.writer.enable),
