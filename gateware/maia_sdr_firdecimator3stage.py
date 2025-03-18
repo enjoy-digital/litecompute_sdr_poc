@@ -71,7 +71,7 @@ class MaiaSDRFIR(LiteXModule):
         decim_width    = [7, 6, 7],
         oper_width     = [7, 6, 7],
         macc_trunc     = [17, 18, 18],
-        cd_domain      = "sys",
+        clk_domain      = "sys",
         add_csr        = True,
         ):
 
@@ -127,8 +127,8 @@ class MaiaSDRFIR(LiteXModule):
         self.ip_params = dict()
         self.ip_params.update(
             # Clk/Reset.
-            i_clk                   = ClockSignal(cd_domain),
-            i_rst                   = ResetSignal(cd_domain),
+            i_clk                   = ClockSignal(clk_domain),
+            i_rst                   = ResetSignal(clk_domain),
 
             # FIR Coefficient.
             i_coeff_wren            = self.coeff_wren,

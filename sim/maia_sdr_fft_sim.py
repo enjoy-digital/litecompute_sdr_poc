@@ -87,7 +87,7 @@ def read_sample_data_from_file(sample_file, data_width):
 _io = [
     # Clk / Rst.
     ("sys_clk",   0, Pins(1)),
-    ("fft2x_clk", 0, Pins(1)),
+    ("sys2x_clk", 0, Pins(1)),
 ]
 
 class Platform(SimPlatform):
@@ -113,10 +113,10 @@ class SimSoC(SoCCore):
         sys_clk = platform.request("sys_clk")
         self.submodules.crg = CRG(sys_clk)
 
-        self.cd_fft_2x = ClockDomain()
+        self.cd_sys2x = ClockDomain()
         self.comb += [
-            self.cd_fft_2x.clk.eq(platform.request("fft2x_clk")),
-            self.cd_fft_2x.rst.eq(ResetSignal("sys")),
+            self.cd_sys2x.clk.eq(platform.request("sys2x_clk")),
+            self.cd_sys2x.rst.eq(ResetSignal("sys")),
         ]
 
         # SoC --------------------------------------------------------------------------------------
@@ -129,9 +129,7 @@ class SimSoC(SoCCore):
             radix       = radix,
             window      = {True: "blackmanharris", False: None}[with_window],
             cmult3x     = False,
-            cd_domain   = "sys",
-            cd_domain2x = "fft_2x",
-            cd_domain3x = "fft_3x",
+            clk_domain  = "sys",
         )
 
         # Signals ----------------------------------------------------------------------------------
@@ -191,7 +189,7 @@ def main():
 
     sim_config = SimConfig(default_clk="sys_clk", default_clk_freq=int(1e6))
     if args.with_window:
-        sim_config.add_clocker("fft2x_clk", int(2e6))
+        sim_config.add_clocker("sys2x_clk", int(2e6))
 
     soc = SimSoC(stream_file=args.file,
         with_window    = args.with_window,

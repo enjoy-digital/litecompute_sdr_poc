@@ -475,17 +475,15 @@ class BaseSoC(SoCMini):
                 radix       = fft_radix,
                 window      = {True: "blackmanharris", False: None}[with_fft_window],
                 cmult3x     = False,
-                cd_domain   = "sys",
-                cd_domain2x = "fft_2x",
-                cd_domain3x = "fft_3x",
+                clk_domain  = "sys",
             )
 
             # Window Clocking.
             # ----------------
             if with_fft_window:
-                self.cd_fft_2x = ClockDomain()
+                self.cd_sys2x = ClockDomain()
 
-                self.crg.pll.create_clkout(self.cd_fft_2x, sys_clk_freq * 2)
+                self.crg.pll.create_clkout(self.cd_sys2x, sys_clk_freq * 2)
 
             # PCIe <-> MaiaSDRFFT.
             # --------------------

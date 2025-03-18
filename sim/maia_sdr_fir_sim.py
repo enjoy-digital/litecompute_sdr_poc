@@ -187,7 +187,7 @@ class SimSoC(SoCCore):
             oper_width     = 7,
             macc_trunc     = 0, #19,
             len_log2       = len_log2,
-            cd_domain      = "sys",
+            clk_domain     = "sys",
             add_csr        = False,
         )
 

@@ -67,9 +67,7 @@ class MaiaSDRFFT(LiteXModule):
         radix        = 2,
         window       = None,
         cmult3x      = False,
-        cd_domain    = "sys",
-        cd_domain2x  = "fft_2x",
-        cd_domain3x  = "fft_3x",
+        clk_domain   = "sys",
         ):
 
         # Prepare/Compute output data width --------------------------------------------------------
@@ -127,8 +125,8 @@ class MaiaSDRFFT(LiteXModule):
         self.ip_params = dict()
         self.ip_params.update(
             # Clk/Reset.
-            i_clk      = ClockSignal(cd_domain),
-            i_rst      = (ResetSignal(cd_domain) | self.reset),
+            i_clk      = ClockSignal(clk_domain),
+            i_rst      = (ResetSignal(clk_domain) | self.reset),
 
             # Input
             i_re_in    = self.re_in,
@@ -143,28 +141,28 @@ class MaiaSDRFFT(LiteXModule):
 
         # Windowing.
         if window is not None:
-            self.clk_edge_x2 = ClockDomainsRenamer({"clk_x1": cd_domain, "clk_xn": cd_domain2x})(
+            self.clk_edge_x2 = ClockDomainsRenamer({"clk_x1": clk_domain, "clk_xn": f"{clk_domain}2x"})(
                 ClkNxCommonEdge(2)
             )
 
             self.ip_params.update(
                 # Clk/Reset.
-                i_clk2x_clk      = ClockSignal(cd_domain2x),
-                i_clk2x_rst      = ResetSignal(cd_domain2x),
+                i_clk2x_clk      = ClockSignal(f"{clk_domain}2x"),
+                i_clk2x_rst      = ResetSignal(f"{clk_domain}2x"),
 
                 i_common_edge_2x = self.clk_edge_x2.common_edge,
             )
 
-        # One multiplier clocked at 3x cd_domain.
+        # One multiplier clocked at 3x clk_domain.
         if cmult3x:
-            self.clk_edge_x3 = ClockDomainsRenamer({"clk_x1": cd_domain, "clk_xn": cd_domain3x})(
+            self.clk_edge_x3 = ClockDomainsRenamer({"clk_x1": clk_domain, "clk_xn": f"{clk_domain}3x"})(
                 ClkNxCommonEdge(3)
             )
 
             self.ip_params.update(
                 # Clk/Reset.
-                i_clk3x_clk      = ClockSignal(cd_domain3x),
-                i_clk3x_rst      = ResetSignal(cd_domain3x),
+                i_clk3x_clk      = ClockSignal(f"{clk_domain}3x"),
+                i_clk3x_rst      = ResetSignal(f"{clk_domain}3x"),
 
                 i_common_edge_3x = self.clk_edge_x3.common_edge
             )

@@ -124,9 +124,7 @@ class BaseSoC(SoCMini):
             radix       = fft_radix,
             window      = {True: "blackmanharris", False: None}[with_fft_window],
             cmult3x     = False,
-            cd_domain   = "sys",
-            cd_domain2x = "sys2x",
-            cd_domain3x = "fft_3x",
+            clk_domain  = "sys",
         )
 
         # TX/RX Datapath ---------------------------------------------------------------------------
