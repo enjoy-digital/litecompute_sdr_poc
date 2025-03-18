@@ -12,12 +12,20 @@
 
 #include <cstdio>    // for printf
 #include <cstdlib>   // for exit
+#include <cstdint>   // for intxx_t
 #include <cstring>   // for strncpy
 #include <cmath>     // for sinf, cosf
+#include <complex>
+#include <vector>
+#include <thread>
+#include <chrono>
 
 // KissFFT
 #include "kiss_fft.h"
 #include <math.h>    // for sqrtf
+
+// M2SDR
+#include "liblitepcie.h"
 
 // -----------------------------------------------------------------------------
 // 1) I/Q Record Panel (unchanged from your snippet)
@@ -540,6 +548,74 @@ static void ShowWaterfall()
 }
 
 // -----------------------------------------------------------------------------
+// 7.1) FFT Thread
+// -----------------------------------------------------------------------------
+static bool g_acquisition_started = false;
+static bool g_acquisition_finish = false;
+static std::string fft_device_name = "/dev/m2sdr1";
+static bool fft_zero_copy = false;
+
+// Data storage
+std::vector<float> data;
+
+void UpdateData() {
+    static struct litepcie_dma_ctrl dma = {.use_writer = 1};
+    data.resize(1024); // FIXME: FFT order cant be hardcoded
+
+    printf("Thread started\n");
+
+    // loop until application end
+    while (!g_acquisition_finish) {
+        printf("In the loop\n");
+        // wait until stream start
+        while (!g_acquisition_started)
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        printf("start acquisition\n");
+        if (g_acquisition_finish) // Stop if requested
+            break;
+        printf("start acquisition2\n");
+
+        /* Initialize DMA. */
+        if (litepcie_dma_init(&dma, fft_device_name.c_str(), fft_zero_copy))
+            exit(1);
+
+        dma.writer_enable = 1;
+        printf("acquisition ready\n");
+
+        // loop until
+        while (g_acquisition_started) {
+            /* Update DMA status. */
+            litepcie_dma_process(&dma);
+
+            /* Read from DMA. */
+            while(1) {
+                if (!g_acquisition_started)
+                    break;
+                /* Get Read buffer. */
+                char *buf_rd = litepcie_dma_next_read_buffer(&dma);
+                /* Break when no buffer available for Read. */
+                if (!buf_rd) {
+                    break;
+                }
+                for (int i = 0; i < DMA_BUFFER_SIZE; i+=2048*2) {
+                    for (int ii = 0; ii < 1024; ii++) {
+                        int16_t re = (((int16_t)buf_rd[i+ii*4 + 0]) << 0) | (((int16_t)buf_rd[i+ii*4+1]) << 8);
+                        int16_t im = (((int16_t)buf_rd[i+ii*4 + 2]) << 0) | (((int16_t)buf_rd[i+ii*4+3]) << 8);
+                        std::complex<float> value((float)re, (float)im);
+                        data[ii] = std::abs(value);
+                    }
+                }
+            }
+        }
+        printf("acquisition stopped\n");
+
+        /* Cleanup DMA. */
+        litepcie_dma_cleanup(&dma);
+    }
+
+}
+
+// -----------------------------------------------------------------------------
 // 8) Master Plot Panel
 // -----------------------------------------------------------------------------
 static int  g_plot_mode = 0;     
@@ -563,6 +639,8 @@ void ShowM2SDRPlotPanel()
     ImGui::Checkbox("Enable Fake Generator", &g_enable_fake_gen);
     ImGui::SameLine();
     ImGui::Checkbox("Animate Wave", &g_animate_wave);
+    ImGui::SameLine();
+    ImGui::Checkbox("Enable Thread", &g_acquisition_started);
 
     ImGui::Separator();
 
@@ -615,12 +693,16 @@ void ShowM2SDRPlotPanel()
     ImGui::Separator();
 
     int n = GetFFTLength();
+    n = 1024;
     if (g_enable_fake_gen) {
         if (g_animate_wave) {
             float dt = ImGui::GetIO().DeltaTime;
             g_time_offset += g_fake_freq_hz * dt * 0.0001f;
         }
         GenerateFakeIQ(g_fake_freq_hz, g_fake_amp, g_time_offset, n);
+        static struct litepcie_dma_ctrl dma = {.use_writer = 1};
+        if (litepcie_dma_init(&dma, "/dev/m2sdr0", false))
+            exit(1);
     } else {
         memset(g_i_data, 0, sizeof(g_i_data));
         memset(g_q_data, 0, sizeof(g_q_data));
@@ -641,7 +723,8 @@ void ShowM2SDRPlotPanel()
     if (g_plot_mode == 0) {
         // Raw I/Q
         ImGui::Text("I samples:");
-        PlotLinesWithAxis("IplotAxis", g_i_data, n, -1.0f, 1.0f, ImVec2(512, 100), true);
+        PlotLinesWithAxis("IplotAxis", data.data(), n/2, -1.0f, 50.0f, ImVec2(512, 100), true);
+        //PlotLinesWithAxis("IplotAxis", g_i.data, n, -1.0f, 1.0f, ImVec2(512, 100), true);
         ImGui::Text("Q samples:");
         PlotLinesWithAxis("QplotAxis", g_q_data, n, -1.0f, 1.0f, ImVec2(512, 100), true);
     } else {
@@ -858,12 +941,19 @@ int main(int, char**)
     ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
     ImGui_ImplOpenGL3_Init("#version 130");
 
+    // Start background data reading thread
+    std::thread dataThread(UpdateData);
+
     bool done = false;
     while (!done) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_QUIT)
+            if (event.type == SDL_QUIT) {
                 done = true;
+                g_acquisition_finish = true;
+                g_acquisition_started = true;
+            }
+
             ImGui_ImplSDL2_ProcessEvent(&event);
         }
 
@@ -905,5 +995,9 @@ int main(int, char**)
     SDL_GL_DeleteContext(gl_context);
     SDL_DestroyWindow(window);
     SDL_Quit();
+
+    // Cleanup
+    dataThread.join();
+
     return 0;
 }

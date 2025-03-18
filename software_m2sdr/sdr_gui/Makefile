@@ -2,8 +2,14 @@
 CXX = g++
 CXXFLAGS = -I. -Iimgui -Iimgui/backends -I/usr/include/SDL2 \
            -DIMGUI_IMPL_OPENGL_LOADER_GLAD -Wall -std=c++11
+
 # Libraries
 LIBS = -lSDL2 -lGL -ldl  # On Linux/macOS
+
+# M2SDR
+M2SDR_DIR ?= ../user
+CXXFLAGS += -I$(M2SDR_DIR)/../kernel -I$(M2SDR_DIR)/libliteeth -I$(M2SDR_DIR)/liblitepcie -I$(M2SDR_DIR)/libm2sdr -I$(M2SDR_DIR)/ad9361
+LIBS += $(M2SDR_DIR)/liblitepcie/liblitepcie.a
 
 # Source files
 SOURCES = main.cpp \
