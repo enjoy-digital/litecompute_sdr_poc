@@ -38,14 +38,14 @@ from gateware.maia_sdr_fft import MaiaSDRFFT
 # CRG ----------------------------------------------------------------------------------------------
 
 class CRG(LiteXModule):
-    def __init__(self, platform, sys_clk_freq, with_window=False):
+    def __init__(self, platform, sys_clk_freq, with_fft_window=False):
         self.rst          = Signal()
         self.cd_sys       = ClockDomain()
         self.cd_sys4x     = ClockDomain()
         self.cd_sys4x_dqs = ClockDomain()
         self.cd_idelay    = ClockDomain()
 
-        if with_window:
+        if with_fft_window:
             self.cd_sys2x = ClockDomain()
 
         # Clk/Rst.
@@ -61,7 +61,7 @@ class CRG(LiteXModule):
         platform.add_false_path_constraints(self.cd_sys.clk, pll.clkin) # Ignore sys_clk to pll.clkin path created by SoC's rst.
 
         # MAIA FFT.
-        if with_window:
+        if with_fft_window:
             pll.create_clkout(self.cd_sys2x, 2 * sys_clk_freq)
 
 # BaseSoC -----------------------------------------------------------------------------------------
@@ -71,8 +71,8 @@ class BaseSoC(SoCMini):
         with_pcie       = False,
         with_led_chaser = True,
         with_uartbone   = True,
-        with_window     = False,
-        radix           = 2,
+        with_fft_window = False,
+        fft_radix       = 2,
         fft_order_log2  = 10,
         **kwargs):
         platform      = sqrl_acorn.Platform(variant=variant)
@@ -87,7 +87,7 @@ class BaseSoC(SoCMini):
         )
 
         # CRG --------------------------------------------------------------------------------------
-        self.crg = CRG(platform, sys_clk_freq, with_window=with_window)
+        self.crg = CRG(platform, sys_clk_freq, with_fft_window=with_fft_window)
 
         # PCIe -------------------------------------------------------------------------------------
         if with_pcie:
@@ -121,8 +121,8 @@ class BaseSoC(SoCMini):
         self.fft = MaiaSDRFFT(platform,
             data_width  = 16,
             order_log2  = fft_order_log2,
-            radix       = radix,
-            window      = {True: "blackmanharris", False: None}[with_window],
+            radix       = fft_radix,
+            window      = {True: "blackmanharris", False: None}[with_fft_window],
             cmult3x     = False,
             cd_domain   = "sys",
             cd_domain2x = "sys2x",
@@ -193,9 +193,9 @@ def main():
     ])
 
     # FFT Configuration.
-    parser.add_argument("--with-window",    action="store_true",      help="Enable FFT Windowing.")
-    parser.add_argument("--radix",          default=2,    type=int,   help="Radix 2/4.")
-    parser.add_argument("--fft-order-log2", default=5,    type=int,   help="Log2 of the FFT order.")
+    parser.add_argument("--with-fft-window", action="store_true",      help="Enable FFT Windowing.")
+    parser.add_argument("--fft-radix",       default=2,    type=int,   help="Radix 2/4.")
+    parser.add_argument("--fft-order-log2",  default=5,    type=int,   help="Log2 of the FFT order.")
 
     # Litescope Analyzer Probes.
     probeopts = parser.add_mutually_exclusive_group()
@@ -204,12 +204,12 @@ def main():
     args = parser.parse_args()
 
     soc = BaseSoC(
-        variant        = args.variant,
-        with_pcie      = True,
-        with_uartbone  = True,
-        with_window    = args.with_window,
-        radix          = args.radix,
-        fft_order_log2 = args.fft_order_log2,
+        variant         = args.variant,
+        with_pcie       = True,
+        with_uartbone   = True,
+        with_fft_window = args.with_fft_window,
+        fft_radix       = args.fft_radix,
+        fft_order_log2  = args.fft_order_log2,
     )
 
     if args.with_fft_datapath_probe:

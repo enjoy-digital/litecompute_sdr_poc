@@ -151,6 +151,8 @@ class BaseSoC(SoCMini):
         with_rfic_oversampling = True,
         with_fft        = False,
         with_fft_window = False,
+        fft_order_log2  = 5,
+        fft_radix       = 2,
     ):
         # Platform ---------------------------------------------------------------------------------
 
@@ -467,12 +469,10 @@ class BaseSoC(SoCMini):
 
         # MAIA SDR FFT -----------------------------------------------------------------------------
         if with_fft:
-            fft_order_log2 = 10
-            radix          = 2
             self.fft = MaiaSDRFFT(platform,
                 data_width  = 16,
                 order_log2  = fft_order_log2,
-                radix       = radix,
+                radix       = fft_radix,
                 window      = {True: "blackmanharris", False: None}[with_fft_window],
                 cmult3x     = False,
                 cd_domain   = "sys",
@@ -618,6 +618,8 @@ def main():
     # FFT parameters.
     parser.add_argument("--with-fft",        action="store_true",     help="Enable FFT Module.")
     parser.add_argument("--with-fft-window", action="store_true",     help="Enable FFT Window.")
+    parser.add_argument("--fft-order-log2",  default=5,   type=int,   help="Log2 of the FFT order.")
+    parser.add_argument("--fft-radix",       default=2,   type=int,   help="Radix 2/4.")
 
     # Litescope Analyzer Probes.
     probeopts = parser.add_mutually_exclusive_group()
@@ -651,6 +653,8 @@ def main():
         # FFT.
         with_fft        = args.with_fft,
         with_fft_window = args.with_fft_window,
+        fft_order_log2  = args.fft_order_log2,
+        fft_radix       = args.fft_radix,
     )
 
     # LiteScope Analyzer Probes.
