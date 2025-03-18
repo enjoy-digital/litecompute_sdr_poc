@@ -11,6 +11,39 @@ the HDL language of their choice and to also provide example projects on various
 
 Example of FPGA based PCIe accelerator infrastructure with LiteX and its cores.
 
+### [> Demonstrations
+
+This repository provides two demonstrations:
+1. The first is based on *SQRL Acorn CLE-215+* (`targets/acorn.py`): it demonstrates the use of the `MaiSDRFFT` integration between
+   `reader` and `writer` DMA channel 0. It act as loopback.
+2. The second is based on *LiteX M2SDR* target (`targets/litex_m2sdr.py`: in this demonstration, the `MaiaSDRFFT` is connected between RFIC and
+   a second DMA Channel. The FFT may be fed with RFIC output (RX side) or set in loopback mode.
+
+**Acorn demonstration**
+```bash
+python3 targets/acorn.py --build [--load] [--flash] [--with-fft-window] [--fft-radix 2/4] [--fft-order-log2 x]
+```
+With:
+* `--load` loads the bitstream to SRAM.
+* `--flash` writes the bitstream into the SPI Flash.
+* `--with-fft-window` enables windowing.
+* `--fft-radix` selects between radix 2 and radix 4 (default: 2)
+* `--fft-order-log2` sets the log2 of the FFT size (default: 5)
+
+**LiteX M2SDR**
+```bash
+python3 targets/litex_m2sdr.py --build [--load] [--flash] [--with-pcie] [--variant] [--with-fft] [--with-fft-window] [--fft-radix 2/4] [--fft-order-log2 x]
+```
+With:
+* `--load` loads the bitstream to SRAM.
+* `--flash` writes the bitstream into the SPI Flash.
+* `--variant` selects between `m2` configuration and `baseboard`.
+* `--with-pcie` enables PCIe support.
+* `--with-fft` enables the FFT module (connected to a second DMA channel).
+* `--with-fft-window` enables windowing.
+* `--fft-radix` selects between radix 2 and radix 4 (default: 2).
+* `--fft-order-log2` sets the log2 of the FFT size (default: 5).
+
 ## [> Prepare Environment
 -------------------------
 
