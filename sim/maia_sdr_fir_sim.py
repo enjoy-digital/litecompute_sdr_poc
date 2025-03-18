@@ -34,7 +34,7 @@ sys.path.append("..")
 
 from utils import PacketStreamer, PacketChecker, clamp_nbits
 
-from litecompute_poc.maia_hdl_fir_wrapper import MAIAHDLFIRWrapper
+from litecompute_poc.maia_sdr_fir import MaiaSDRFIR
 
 # Utils --------------------------------------------------------------------------------------------
 def two_complement_encode(value, bits):
@@ -178,8 +178,8 @@ class SimSoC(SoCCore):
         im_out          = Signal((data_out_width, True))
         coeff_write_end = Signal()
 
-        # MAIA HDL FIR Wrapper ---------------------------------------------------------------------
-        self.fir = fir = MAIAHDLFIRWrapper(platform,
+        # MAIA SDR FIR -----------------------------------------------------------------------------
+        self.fir = fir = MaiaSDRFIR(platform,
             data_in_width  = data_in_width,
             data_out_width = data_out_width,
             coeff_width    = 18,

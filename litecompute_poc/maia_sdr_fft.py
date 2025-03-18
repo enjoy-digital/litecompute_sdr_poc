@@ -58,9 +58,9 @@ def fft_generator(output_path, data_width=12, order_log2=12, radix=4, window=Non
     print('wrote verilog to', file_out)
     print(f"Delay: {m.delay}")
 
-# MAIAHDLFFTWrapper --------------------------------------------------------------------------------
+# MaiaSDRFFT ---------------------------------------------------------------------------------------
 
-class MAIAHDLFFTWrapper(LiteXModule):
+class MaiaSDRFFT(LiteXModule):
     def __init__(self, platform,
         data_width   = 12,
         order_log2   = 12,

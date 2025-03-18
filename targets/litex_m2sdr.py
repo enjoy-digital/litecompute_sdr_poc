@@ -59,7 +59,7 @@ from gateware.measurement import MultiClkMeasurement
 
 from software import generate_litepcie_software
 
-from litecompute_poc.maia_hdl_fft_wrapper import MAIAHDLFFTWrapper
+from litecompute_poc.maia_sdr_fft import MaiaSDRFFT
 
 # CRG ----------------------------------------------------------------------------------------------
 
@@ -465,11 +465,11 @@ class BaseSoC(SoCMini):
             "clk4" : si5351_clk1,
         })
 
-        # MAIA HDL FFT Wrapper ---------------------------------------------------------------------
+        # MAIA SDR FFT -----------------------------------------------------------------------------
         if with_fft:
             fft_order_log2 = 10
             radix          = 2
-            self.fft = MAIAHDLFFTWrapper(platform,
+            self.fft = MaiaSDRFFT(platform,
                 data_width  = 16,
                 order_log2  = fft_order_log2,
                 radix       = radix,
@@ -487,8 +487,8 @@ class BaseSoC(SoCMini):
 
                 self.crg.pll.create_clkout(self.cd_fft_2x, sys_clk_freq * 2)
 
-            # PCIe <-> MAIAHDLFFTWrapper.
-            # ---------------------------
+            # PCIe <-> MaiaSDRFFT.
+            # --------------------
 
             #self.tx_conv = ResetInserter()(stream.Converter(64, 32))
             # FIXME: FFT output size is not always == input size

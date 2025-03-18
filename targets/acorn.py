@@ -33,7 +33,7 @@ from liteeth.phy.a7_gtp import QPLLSettings, QPLL
 
 from litescope import LiteScopeAnalyzer
 
-from litecompute_poc.maia_hdl_fft_wrapper import MAIAHDLFFTWrapper
+from litecompute_poc.maia_sdr_fft import MaiaSDRFFT
 
 # CRG ----------------------------------------------------------------------------------------------
 
@@ -117,8 +117,8 @@ class BaseSoC(SoCMini):
             )
             self.pcie_phy.use_external_qpll(qpll_channel=qpll.channels[0])
 
-        # MAIA HDL FFT Wrapper ---------------------------------------------------------------------
-        self.fft = MAIAHDLFFTWrapper(platform,
+        # MAIA SDR FFT -----------------------------------------------------------------------------
+        self.fft = MaiaSDRFFT(platform,
             data_width  = 16,
             order_log2  = fft_order_log2,
             radix       = radix,
@@ -131,8 +131,8 @@ class BaseSoC(SoCMini):
 
         # TX/RX Datapath ---------------------------------------------------------------------------
 
-        # PCIe <-> MAIAHDLFFTWrapper.
-        # ---------------------------
+        # PCIe <-> MaiaHDLFFT.
+        # --------------------
 
         self.tx_conv = ResetInserter()(stream.Converter(64, 32))
         # FIXME: FFT output size is not always == input size

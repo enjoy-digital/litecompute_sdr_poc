@@ -61,9 +61,9 @@ def fir_generator(output_path,
 
     print('wrote verilog to', output_path)
 
-# MAIAHDLFIRWrapper --------------------------------------------------------------------------------
+# MaiaSDRFIR ---------------------------------------------------------------------------------------
 
-class MAIAHDLFIRWrapper(LiteXModule):
+class MaiaSDRFIR(LiteXModule):
     def __init__(self, platform,
         data_in_width  = 16,
         data_out_width = 16,

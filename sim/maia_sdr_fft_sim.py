@@ -31,7 +31,7 @@ sys.path.append("..")
 
 from utils import PacketStreamer, PacketChecker
 
-from litecompute_poc.maia_hdl_fft_wrapper import MAIAHDLFFTWrapper
+from litecompute_poc.maia_sdr_fft import MaiaSDRFFT
 
 # Utils --------------------------------------------------------------------------------------------
 def two_complement_encode(value, bits):
@@ -122,8 +122,8 @@ class SimSoC(SoCCore):
         # SoC --------------------------------------------------------------------------------------
         SoCMini.__init__(self, platform, clk_freq=sys_clk_freq)
 
-        # MAIA HDL FFT Wrapper ---------------------------------------------------------------------
-        self.fft = MAIAHDLFFTWrapper(platform,
+        # MAIA SDR FFT -----------------------------------------------------------------------------
+        self.fft = MaiaSDRFFT(platform,
             data_width  = data_width,
             order_log2  = fft_order_log2,
             radix       = radix,
