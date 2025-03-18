@@ -111,7 +111,6 @@ class MaiaSDRFIR(LiteXModule):
         self.im_in        = Signal(data_in_width)
         self.re_out       = Signal(data_out_width)
         self.im_out       = Signal(data_out_width)
-        self.source_first = Signal()
 
         # FIR Instance -----------------------------------------------------------------------------
 

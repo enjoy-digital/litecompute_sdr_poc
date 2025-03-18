@@ -112,7 +112,6 @@ class MaiaSDRFFT(LiteXModule):
         self.im_in        = Signal(data_width)
         self.re_out       = Signal(self.out_width)
         self.im_out       = Signal(self.out_width)
-        self.source_first = Signal()
 
         self.ip_name = "fft_radix{radix}_{window}{cmult3x}".format(
             radix   = radix,
@@ -173,21 +172,7 @@ class MaiaSDRFFT(LiteXModule):
 
         # FFT module has no ready nor output valid (but re_out/im_out are updated one clock cycle after
         # clken/valid goes high).
-        self.comb += [
-            sink.ready.eq(1),
-            source.first.eq(self.source_first),
-        ]
-
-        self.sync += [
-            If(source.last,
-               self.source_first.eq(1),
-            ).Elif(source.valid,
-               self.source_first.eq(0),
-            ),
-            If(self.reset,
-               self.source_first.eq(0),
-            ),
-        ]
+        self.comb += sink.ready.eq(1)
 
         self.fsm = fsm = FSM(reset_state="IDLE")
         fsm.act("IDLE",
