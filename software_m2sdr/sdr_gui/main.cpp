@@ -76,10 +76,14 @@ void ShowM2SDRIQRecordPanel()
     ImGui::End();
 }
 
-/* m2sdr_tone */
+// -----------------------------------------------------------------------------
+// m2sdr_tone */
+// -----------------------------------------------------------------------------
 static bool is_tone_process_running = false;
 static std::unique_ptr<TinyProcessLib::Process> tone_process;
 static int tone_freq = 1000;
+static int tone_sample_rate = 30720000;
+static float tone_amplitude = 1.0f;
 
 void ShowM2SDRTonePanel()
 {
@@ -89,15 +93,26 @@ void ShowM2SDRTonePanel()
     ImGui::Begin("M2SDR Tone Utility", nullptr);
     {
         ImGui::InputText("Device", sdr_device, IM_ARRAYSIZE(sdr_device));
-        ImGui::InputText("Filename", record_filename, IM_ARRAYSIZE(record_filename));
         ImGui::InputInt("Frequency", &tone_freq);
-        ImGui::InputInt("Frequency", &tone_freq);
+        ImGui::InputInt("Sample Rate", &tone_sample_rate);
+        ImGui::InputFloat("Amplitude", &tone_amplitude);
         ImGui::Checkbox("Zero-Copy DMA", &use_zero_copy_record);
 
-        ImGui::Separator();
-        if (ImGui::Button("Start M2SDR ToneM2SDR Tone") & !is_tone_process_running) {
-            uint8_t zero_copy_flag = use_zero_copy_record ? 1 : 0;
-            std::vector<std::string> args = {"../user/m2sdr_tone", "-f", std::to_string(tone_freq)};
+        if (tone_amplitude > 1.0f)
+            tone_amplitude = 1.0f;
+        if (tone_amplitude < 0.0f)
+            tone_amplitude = 0.0f;
+
+        ImGui::SameLine();
+        if (ImGui::Button("Start M2SDR Tone") & !is_tone_process_running) {
+            std::vector<std::string> args = {
+                "../user/m2sdr_tone",
+                "-f", std::to_string(tone_freq),
+                "-s", std::to_string(tone_sample_rate),
+                "-a", std::to_string(tone_amplitude)
+            };
+            if (use_zero_copy_record)
+                args.push_back("-z");
             tone_process = std::unique_ptr<TinyProcessLib::Process>(new TinyProcessLib::Process(args, "", nullptr, nullptr, false));
             if (tone_process->get_id() > 0) {
                 is_tone_process_running = true;
