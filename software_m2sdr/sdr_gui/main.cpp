@@ -669,8 +669,8 @@ void UpdateData() {
 
         // loop until
         while (g_acquisition_started) {
-			if (g_acquisition_finish)
-				break;
+            if (g_acquisition_finish)
+                break;
             /* Update DMA status. */
             litepcie_dma_process(&dma);
 
@@ -738,10 +738,6 @@ void ShowM2SDRPlotPanel()
     ImGui::SameLine();
     ImGui::RadioButton("FFT", &g_plot_mode, 1);
 
-    ImGui::Checkbox("Enable Fake Generator", &g_enable_fake_gen);
-    ImGui::SameLine();
-    ImGui::Checkbox("Animate Wave", &g_animate_wave);
-    ImGui::SameLine();
     ImGui::Checkbox("Enable Thread", &g_acquisition_started);
 
     ImGui::Separator();
@@ -810,15 +806,15 @@ void ShowM2SDRPlotPanel()
         //memset(g_q_data, 0, sizeof(g_q_data));
     }
 
-    //if (g_plot_mode == 1) {
-    //    //ComputeFFT(g_i_data, g_q_data, g_fft_data, n);
-    //    if (g_enable_waterfall) {
-    //        g_waterfall_framecount++;
-    //        if (g_waterfall_framecount % g_waterfall_speed == 0) {
-    //            AddWaterfallRow(g_fft_data, n);
-    //        }
-    //    }
-    //}
+    if (g_plot_mode == 1) {
+        //ComputeFFT(g_i_data, g_q_data, g_fft_data, n);
+        if (g_enable_waterfall) {
+            g_waterfall_framecount++;
+            if (g_waterfall_framecount % g_waterfall_speed == 0) {
+                AddWaterfallRow(g_fft_data, n);
+            }
+        }
+    }
 
     ImGui::Text("Signal Plot (%d pts):", n);
 
@@ -847,10 +843,11 @@ void ShowM2SDRPlotPanel()
         //ImGui::Text("FFT Magnitude:");
         //PlotLinesWithAxis("FFTaxis", g_fft_data, n, 0.0f, 500.0f, ImVec2(512, 180), true);
 
-        //if (g_enable_waterfall) {
-        //    ImGui::Text("Waterfall (latest at bottom):");
-        //    ShowWaterfall();
-        //}
+        if (g_enable_waterfall) {
+            ImGui::Text("Waterfall (latest at bottom):");
+            ShowWaterfall();
+        }
+        float max_fft = 0;
         if (g_acquisition_started) {
             {
                 std::lock_guard<std::mutex> lock(buffer_mutex);
@@ -858,6 +855,8 @@ void ShowM2SDRPlotPanel()
                     for (int i = 0;  i < n; i++) {
                         std::complex<float> value(i_buffer[i], q_buffer[i]);
                         g_fft_data[i] = std::abs(value);
+                        if (g_fft_data[i] > max_fft)
+                            max_fft = g_fft_data[i];
                     }
                     // Remove all unused samples
                     uint32_t length = (i_buffer.size() / n) * n;
@@ -867,7 +866,7 @@ void ShowM2SDRPlotPanel()
             }
         }
         ImGui::Text("I samples:");
-        PlotLinesWithAxis("IplotAxis", g_fft_data, n, -2.0f, 800.0f, ImVec2(512, 300), true);
+        PlotLinesWithAxis("IplotAxis", g_fft_data, n, -2.0f, max_fft + 10, ImVec2(768, 300), true);
     }
 
     ImGui::End();
