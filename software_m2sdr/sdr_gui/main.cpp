@@ -20,11 +20,15 @@
 #include <thread>
 #include <chrono>
 #include <deque>
+#include <memory>
 #include <mutex>
 
 // KissFFT
 #include "kiss_fft.h"
 #include <math.h>    // for sqrtf
+
+// TinyProcess
+#include <process.hpp> // tiny-process-library header
 
 // M2SDR
 #include "liblitepcie.h"
@@ -67,6 +71,43 @@ void ShowM2SDRIQRecordPanel()
         if (ImGui::Button("Start I/Q Record")) {
             uint8_t zero_copy_flag = use_zero_copy_record ? 1 : 0;
             m2sdr_record(sdr_device, record_filename, (uint32_t)record_size, zero_copy_flag);
+        }
+    }
+    ImGui::End();
+}
+
+/* m2sdr_tone */
+static bool is_tone_process_running = false;
+static std::unique_ptr<TinyProcessLib::Process> tone_process;
+static int tone_freq = 1000;
+
+void ShowM2SDRTonePanel()
+{
+    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(350, 220), ImGuiCond_Always);
+
+    ImGui::Begin("M2SDR Tone Utility", nullptr);
+    {
+        ImGui::InputText("Device", sdr_device, IM_ARRAYSIZE(sdr_device));
+        ImGui::InputText("Filename", record_filename, IM_ARRAYSIZE(record_filename));
+        ImGui::InputInt("Frequency", &tone_freq);
+        ImGui::InputInt("Frequency", &tone_freq);
+        ImGui::Checkbox("Zero-Copy DMA", &use_zero_copy_record);
+
+        ImGui::Separator();
+        if (ImGui::Button("Start M2SDR ToneM2SDR Tone") & !is_tone_process_running) {
+            uint8_t zero_copy_flag = use_zero_copy_record ? 1 : 0;
+            std::vector<std::string> args = {"../user/m2sdr_tone", "-f", std::to_string(tone_freq)};
+            tone_process = std::unique_ptr<TinyProcessLib::Process>(new TinyProcessLib::Process(args, "", nullptr, nullptr, false));
+            if (tone_process->get_id() > 0) {
+                is_tone_process_running = true;
+            }
+        }
+
+        if (ImGui::Button("Stop M2SDR Tone") & is_tone_process_running) {
+            tone_process->kill();
+            tone_process.reset();
+            is_tone_process_running = false;
         }
     }
     ImGui::End();
@@ -600,6 +641,7 @@ void UpdateData() {
             device_name = raw_device_name;
         else
             device_name = fft_device_name;
+        printf("%ld %ld\n", q_buffer.size(), i_buffer.size());
 
         /* Initialize DMA. */
         if (litepcie_dma_init(&dma, device_name.c_str(), fft_zero_copy))
@@ -667,7 +709,7 @@ void ShowM2SDRPlotPanel()
 {
     //ImGui::SetNextWindowPos(ImVec2(730, 240), ImGuiCond_Always);
     //ImGui::SetNextWindowSize(ImVec2(1024, 800), ImGuiCond_Always);
-    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(350, 10), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(1024, 800), ImGuiCond_Always);
 
     ImGui::Begin("M2SDR Plot Panel");
@@ -771,8 +813,9 @@ void ShowM2SDRPlotPanel()
                         g_i_data[i] = i_buffer[i];
                         g_q_data[i] = q_buffer[i];
                     }
-                    i_buffer.erase(i_buffer.begin(), i_buffer.begin() + n);
-                    q_buffer.erase(q_buffer.begin(), q_buffer.begin() + n);
+                    // Remove all unused samples
+                    i_buffer.clear();
+                    q_buffer.clear();
                 }
             }
         }
@@ -797,8 +840,12 @@ void ShowM2SDRPlotPanel()
                         std::complex<float> value(i_buffer[i], q_buffer[i]);
                         g_fft_data[i] = std::abs(value);
                     }
-                    i_buffer.erase(i_buffer.begin(), i_buffer.begin() + n);
-                    q_buffer.erase(q_buffer.begin(), q_buffer.begin() + n);
+                    // Remove all unused samples
+                    uint32_t length = (i_buffer.size() / n) * n;
+                    i_buffer.erase(i_buffer.begin(), i_buffer.begin() + length);
+                    q_buffer.erase(q_buffer.begin(), q_buffer.begin() + length);
+                    //i_buffer.erase(i_buffer.begin(), i_buffer.begin() + n);
+                    //q_buffer.erase(q_buffer.begin(), q_buffer.begin() + n);
                 }
             }
         }
@@ -1013,6 +1060,7 @@ int main(int, char**)
     std::thread dataThread(UpdateData);
 
     bool done = false;
+
     while (!done) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -1029,6 +1077,9 @@ int main(int, char**)
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
+
+        // The M2SDR Tone panel
+        ShowM2SDRTonePanel();
 
         // The I/Q Record panel
         //ShowM2SDRIQRecordPanel();
@@ -1052,6 +1103,13 @@ int main(int, char**)
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         SDL_GL_SwapWindow(window);
+    }
+
+    // Stop m2sdr_tone process
+    if (is_tone_process_running) {
+        tone_process->kill();
+        tone_process.reset();
+        is_tone_process_running = false;
     }
 
     // Cleanup
