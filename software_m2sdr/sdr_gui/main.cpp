@@ -103,7 +103,7 @@ void ShowM2SDRTonePanel()
         if (tone_amplitude < 0.0f)
             tone_amplitude = 0.0f;
 
-        ImGui::SameLine();
+        ImGui::Separator();
         if (ImGui::Button("Start M2SDR Tone") & !is_tone_process_running) {
             std::vector<std::string> args = {
                 "../user/m2sdr_tone",
@@ -118,6 +118,8 @@ void ShowM2SDRTonePanel()
                 is_tone_process_running = true;
             }
         }
+
+        ImGui::SameLine();
 
         if (ImGui::Button("Stop M2SDR Tone") & is_tone_process_running) {
             tone_process->kill();
@@ -667,12 +669,14 @@ void UpdateData() {
 
         // loop until
         while (g_acquisition_started) {
+			if (g_acquisition_finish)
+				break;
             /* Update DMA status. */
             litepcie_dma_process(&dma);
 
             /* Read from DMA. */
             while(1) {
-                if (!g_acquisition_started)
+                if (g_acquisition_finish)
                     break;
                 /* Get Read buffer. */
                 char *buf_rd = litepcie_dma_next_read_buffer(&dma);
@@ -690,7 +694,7 @@ void UpdateData() {
                     scaling = 2047;                                            // 12bits signed
                 } else {
                     step = 2;                                                  // 1x I/Q pairs
-                    scaling = 32767;                                           // 16bits signed
+                    scaling = 1;                                               // 16bits signed
                 }
                 num_samples = DMA_BUFFER_SIZE / (step * sizeof(int16_t));
 
@@ -859,13 +863,11 @@ void ShowM2SDRPlotPanel()
                     uint32_t length = (i_buffer.size() / n) * n;
                     i_buffer.erase(i_buffer.begin(), i_buffer.begin() + length);
                     q_buffer.erase(q_buffer.begin(), q_buffer.begin() + length);
-                    //i_buffer.erase(i_buffer.begin(), i_buffer.begin() + n);
-                    //q_buffer.erase(q_buffer.begin(), q_buffer.begin() + n);
                 }
             }
         }
         ImGui::Text("I samples:");
-        PlotLinesWithAxis("IplotAxis", g_fft_data, n / 2, -1.0f, 1.0f, ImVec2(512, 100), true);
+        PlotLinesWithAxis("IplotAxis", g_fft_data, n, -2.0f, 800.0f, ImVec2(512, 300), true);
     }
 
     ImGui::End();
@@ -1081,8 +1083,6 @@ int main(int, char**)
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
                 done = true;
-                g_acquisition_finish = true;
-                g_acquisition_started = true;
             }
 
             ImGui_ImplSDL2_ProcessEvent(&event);
@@ -1138,6 +1138,8 @@ int main(int, char**)
     SDL_Quit();
 
     // Cleanup
+    g_acquisition_finish = true;
+    g_acquisition_started = true;
     dataThread.join();
 
     return 0;
