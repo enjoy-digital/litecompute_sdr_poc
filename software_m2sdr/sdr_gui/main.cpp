@@ -614,9 +614,11 @@ static void ShowWaterfall()
 // -----------------------------------------------------------------------------
 // 7.1) FFT Thread
 // -----------------------------------------------------------------------------
-static bool g_acquisition_started = false;
-static bool g_acquisition_finish = false;
-static std::string raw_device_name = "/dev/m2sdr0";
+static bool g_thread_fft_started = false;
+static bool g_thread_fft_finish = false;
+static bool g_thread_raw_iq_started = false;
+static bool g_thread_raw_iq_finish = false;
+static std::string raw_iq_device_name = "/dev/m2sdr0";
 static std::string fft_device_name = "/dev/m2sdr1";
 static bool fft_zero_copy = 0;
 static int  g_plot_mode = 0;
@@ -631,52 +633,53 @@ std::deque<float> q_buffer;
 std::deque<float> i_buffer;
 std::mutex buffer_mutex;
 
-void UpdateData() {
+void UpdateData(const std::string &device_name,
+        bool *thread_finish, bool *thread_started,
+        int step, float scaling,
+        std::deque<float> &i_buff, std::deque<float> &q_buff) {
     static struct litepcie_dma_ctrl dma = {.use_writer = 1};
     data.resize(1024); // FIXME: FFT order cant be hardcoded
 
     printf("Thread started\n");
 
     // loop until application end
-    while (!g_acquisition_finish) {
+    while (!*thread_finish) {
         printf("In the loop\n");
 
         // wait until stream start
-        while (!g_acquisition_started)
+        while (!*thread_started)
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
         printf("start acquisition\n");
-        if (g_acquisition_finish) // Stop if requested
+        if (*thread_finish) // Stop if requested
             break;
 
         printf("start acquisition2\n");
         q_buffer.clear();
         i_buffer.clear();
-
-        std::string device_name;
+        std::string th_device_name;
         if (g_plot_mode == 0)
-            device_name = raw_device_name;
+            th_device_name = "/dev/m2sdr0";
         else
-            device_name = fft_device_name;
-        printf("%ld %ld\n", q_buffer.size(), i_buffer.size());
+            th_device_name = "/dev/m2sdr1";
 
         /* Initialize DMA. */
-        if (litepcie_dma_init(&dma, device_name.c_str(), fft_zero_copy))
+        if (litepcie_dma_init(&dma, th_device_name.c_str(), fft_zero_copy))
             exit(1);
 
         dma.writer_enable = 1;
         printf("acquisition ready\n");
 
         // loop until
-        while (g_acquisition_started) {
-            if (g_acquisition_finish)
+        while (*thread_started) {
+            if (*thread_finish)
                 break;
             /* Update DMA status. */
             litepcie_dma_process(&dma);
 
             /* Read from DMA. */
             while(1) {
-                if (g_acquisition_finish)
+                if (*thread_finish)
                     break;
                 /* Get Read buffer. */
                 char *buf_rd = litepcie_dma_next_read_buffer(&dma);
@@ -687,8 +690,6 @@ void UpdateData() {
 
                 int16_t *samples = (int16_t *)buf_rd;
                 size_t num_samples;
-                float scaling;
-                uint16_t step;
                 if (g_plot_mode == 0) {
                     step = 4;                                                  // 2x I/Q pairs
                     scaling = 2047;                                            // 12bits signed
@@ -701,8 +702,8 @@ void UpdateData() {
                 {
                     std::lock_guard<std::mutex> lock(buffer_mutex);
                     for (size_t i = 0; i < num_samples; i++) {
-                        i_buffer.push_back((float)samples[step * i + 0] / scaling); // I, normalized
-                        q_buffer.push_back((float)samples[step * i + 1] / scaling); // Q, normalized
+                        i_buff.push_back((float)samples[step * i + 0] / scaling); // I, normalized
+                        q_buff.push_back((float)samples[step * i + 1] / scaling); // Q, normalized
                     }
                 }
             }
@@ -713,9 +714,23 @@ void UpdateData() {
         litepcie_dma_cleanup(&dma);
         dma.writer_enable = 0;
     }
-
 }
 
+void fftThread()
+{
+    printf("a\n");
+    UpdateData(fft_device_name, &g_thread_fft_finish, &g_thread_fft_started,
+        2, 1,
+        i_buffer, q_buffer);
+    printf("b\n");
+}
+
+void rawIQThread()
+{
+    UpdateData(raw_iq_device_name, &g_thread_raw_iq_finish,
+        4, 2047,
+        &g_thread_raw_iq_started, i_buffer, q_buffer);
+}
 // -----------------------------------------------------------------------------
 // 8) Master Plot Panel
 // -----------------------------------------------------------------------------
@@ -738,7 +753,7 @@ void ShowM2SDRPlotPanel()
     ImGui::SameLine();
     ImGui::RadioButton("FFT", &g_plot_mode, 1);
 
-    ImGui::Checkbox("Enable Thread", &g_acquisition_started);
+    ImGui::Checkbox("Enable Thread", &g_thread_fft_started);
 
     ImGui::Separator();
 
@@ -820,7 +835,7 @@ void ShowM2SDRPlotPanel()
 
     if (g_plot_mode == 0) {
         // Raw I/Q
-        if (g_acquisition_started) {
+        if (g_thread_fft_started) {
             {
                 std::lock_guard<std::mutex> lock(buffer_mutex);
                 if (!q_buffer.empty() && !i_buffer.empty() && (q_buffer.size() >= 1024) && (i_buffer.size() >= 1024)) {
@@ -840,15 +855,8 @@ void ShowM2SDRPlotPanel()
         PlotLinesWithAxis("QplotAxis", g_q_data, n, -1.0f, 1.0f, ImVec2(768, 200), true);
     } else {
         // FFT
-        //ImGui::Text("FFT Magnitude:");
-        //PlotLinesWithAxis("FFTaxis", g_fft_data, n, 0.0f, 500.0f, ImVec2(512, 180), true);
-
-        if (g_enable_waterfall) {
-            ImGui::Text("Waterfall (latest at bottom):");
-            ShowWaterfall();
-        }
         float max_fft = 0;
-        if (g_acquisition_started) {
+        if (g_thread_fft_started) {
             {
                 std::lock_guard<std::mutex> lock(buffer_mutex);
                 if (!q_buffer.empty() && !i_buffer.empty() && (q_buffer.size() >= 1024) && (i_buffer.size() >= 1024)) {
@@ -865,8 +873,12 @@ void ShowM2SDRPlotPanel()
                 }
             }
         }
-        ImGui::Text("I samples:");
+        ImGui::Text("FFT Magnitude:");
         PlotLinesWithAxis("IplotAxis", g_fft_data, n, -2.0f, max_fft + 10, ImVec2(768, 300), true);
+        if (g_enable_waterfall) {
+            ImGui::Text("Waterfall (latest at bottom):");
+            ShowWaterfall();
+        }
     }
 
     ImGui::End();
@@ -1073,7 +1085,7 @@ int main(int, char**)
     ImGui_ImplOpenGL3_Init("#version 130");
 
     // Start background data reading thread
-    std::thread dataThread(UpdateData);
+    std::thread dataThread(fftThread);
 
     bool done = false;
 
@@ -1137,8 +1149,8 @@ int main(int, char**)
     SDL_Quit();
 
     // Cleanup
-    g_acquisition_finish = true;
-    g_acquisition_started = true;
+    g_thread_fft_finish = true;
+    g_thread_fft_started = true;
     dataThread.join();
 
     return 0;
