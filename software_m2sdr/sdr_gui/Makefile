@@ -9,6 +9,7 @@ LIBS = -lSDL2 -lGL -ldl  # On Linux/macOS
 # M2SDR
 M2SDR_DIR ?= ../user
 CXXFLAGS += -I$(M2SDR_DIR)/../kernel -I$(M2SDR_DIR)/libliteeth -I$(M2SDR_DIR)/liblitepcie -I$(M2SDR_DIR)/libm2sdr -I$(M2SDR_DIR)/ad9361
+CXXFLAGS += -Itiny-process-library
 LIBS += $(M2SDR_DIR)/liblitepcie/liblitepcie.a
 
 # Source files
@@ -21,7 +22,9 @@ SOURCES = main.cpp \
 	imgui/imgui_tables.cpp \
     imgui/imgui_widgets.cpp \
 	imgui/backends/imgui_impl_sdl2.cpp \
-	imgui/backends/imgui_impl_opengl3.cpp
+	imgui/backends/imgui_impl_opengl3.cpp \
+	tiny-process-library/process_unix.cpp \
+	tiny-process-library/process.cpp \
 
 # Output directory and executable name
 BUILD_DIR = build
