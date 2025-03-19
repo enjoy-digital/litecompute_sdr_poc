@@ -263,7 +263,7 @@ void ShowM2SDRRFPanel()
 static const int MAX_FFT_SAMPLES = 1 << 20;
 //static float g_i_data[MAX_FFT_SAMPLES];
 //static float g_q_data[MAX_FFT_SAMPLES];
-static float g_fft_data[MAX_FFT_SAMPLES];
+//static float g_fft_data[MAX_FFT_SAMPLES];
 
 // -----------------------------------------------------------------------------
 // 5) Preconfigured FFT sizes
@@ -333,7 +333,7 @@ static void GenerateFakeIQ(float freq_hz, float amplitude, float time_offset, in
 {
     (void)freq_hz;
     (void)amplitude;
-    (void=time_offset;
+    (void)time_offset;
     (void)n;
     //const float sample_rate = 1e6f;
     //if (n > MAX_FFT_SAMPLES) n = MAX_FFT_SAMPLES;
@@ -558,15 +558,16 @@ static void ShowWaterfall()
 // -----------------------------------------------------------------------------
 static bool g_acquisition_started = false;
 static bool g_acquisition_finish = false;
-static std::string fft_device_name = "/dev/m2sdr0";
+static std::string raw_device_name = "/dev/m2sdr0";
+static std::string fft_device_name = "/dev/m2sdr1";
 static bool fft_zero_copy = 0;
+static int  g_plot_mode = 0;
 
 // Data storage
 std::vector<float> data;
 float g_q_data[1024];
 float g_i_data[1024];
-float max_q_data = 0;
-float min_q_data = 0;
+float g_fft_data[1024];
 
 std::deque<float> q_buffer;
 std::deque<float> i_buffer;
@@ -594,8 +595,14 @@ void UpdateData() {
         q_buffer.clear();
         i_buffer.clear();
 
+        std::string device_name;
+        if (g_plot_mode == 0)
+            device_name = raw_device_name;
+        else
+            device_name = fft_device_name;
+
         /* Initialize DMA. */
-        if (litepcie_dma_init(&dma, fft_device_name.c_str(), fft_zero_copy))
+        if (litepcie_dma_init(&dma, device_name.c_str(), fft_zero_copy))
             exit(1);
 
         dma.writer_enable = 1;
@@ -616,16 +623,25 @@ void UpdateData() {
                 if (!buf_rd) {
                     break;
                 }
-                min_q_data = 32767;
-                max_q_data = -32767;
-                {
-                    int16_t *samples = (int16_t *)buf_rd;
-                    size_t num_samples = DMA_BUFFER_SIZE / (2 * 2 * sizeof(int16_t)); // 2x I/Q pairs
 
+                int16_t *samples = (int16_t *)buf_rd;
+                size_t num_samples;
+                float scaling;
+                uint16_t step;
+                if (g_plot_mode == 0) {
+                    step = 4;                                                  // 2x I/Q pairs
+                    scaling = 2047;                                            // 12bits signed
+                } else {
+                    step = 2;                                                  // 1x I/Q pairs
+                    scaling = 32767;                                           // 16bits signed
+                }
+                num_samples = DMA_BUFFER_SIZE / (step * sizeof(int16_t));
+
+                {
                     std::lock_guard<std::mutex> lock(buffer_mutex);
                     for (size_t i = 0; i < num_samples; i++) {
-                        i_buffer.push_back((float)samples[4 * i + 0] / 2047.0f); // I, normalized
-                        q_buffer.push_back((float)samples[4 * i + 1] / 2047.0f); // Q, normalized
+                        i_buffer.push_back((float)samples[step * i + 0] / scaling); // I, normalized
+                        q_buffer.push_back((float)samples[step * i + 1] / scaling); // Q, normalized
                     }
                 }
             }
@@ -642,7 +658,6 @@ void UpdateData() {
 // -----------------------------------------------------------------------------
 // 8) Master Plot Panel
 // -----------------------------------------------------------------------------
-static int  g_plot_mode = 0;     
 static bool g_enable_fake_gen = false;
 static bool g_animate_wave   = false;
 
@@ -734,31 +749,31 @@ void ShowM2SDRPlotPanel()
         //memset(g_q_data, 0, sizeof(g_q_data));
     }
 
-    if (g_plot_mode == 1) {
-        //ComputeFFT(g_i_data, g_q_data, g_fft_data, n);
-        if (g_enable_waterfall) {
-            g_waterfall_framecount++;
-            if (g_waterfall_framecount % g_waterfall_speed == 0) {
-                AddWaterfallRow(g_fft_data, n);
-            }
-        }
-    }
+    //if (g_plot_mode == 1) {
+    //    //ComputeFFT(g_i_data, g_q_data, g_fft_data, n);
+    //    if (g_enable_waterfall) {
+    //        g_waterfall_framecount++;
+    //        if (g_waterfall_framecount % g_waterfall_speed == 0) {
+    //            AddWaterfallRow(g_fft_data, n);
+    //        }
+    //    }
+    //}
 
     ImGui::Text("Signal Plot (%d pts):", n);
 
     if (g_plot_mode == 0) {
         // Raw I/Q
-        //PlotLinesWithAxis("IplotAxis", data.data(), n/2, -1.0f, 500.0f, ImVec2(768, 200), true);
-        //PlotLinesWithAxis("IplotAxis", g_i.data, n, -1.0f, 1.0f, ImVec2(512, 100), true);
-        {
-            std::lock_guard<std::mutex> lock(buffer_mutex);
-            if (!q_buffer.empty() && !i_buffer.empty() && (q_buffer.size() >= 1024) && (i_buffer.size() >= 1024)) {
-                for (int i = 0;  i < n; i++) {
-                    g_i_data[i] = i_buffer[i];
-                    g_q_data[i] = q_buffer[i];
+        if (g_acquisition_started) {
+            {
+                std::lock_guard<std::mutex> lock(buffer_mutex);
+                if (!q_buffer.empty() && !i_buffer.empty() && (q_buffer.size() >= 1024) && (i_buffer.size() >= 1024)) {
+                    for (int i = 0;  i < n; i++) {
+                        g_i_data[i] = i_buffer[i];
+                        g_q_data[i] = q_buffer[i];
+                    }
+                    i_buffer.erase(i_buffer.begin(), i_buffer.begin() + n);
+                    q_buffer.erase(q_buffer.begin(), q_buffer.begin() + n);
                 }
-                i_buffer.erase(i_buffer.begin(), i_buffer.begin() + n);
-                q_buffer.erase(q_buffer.begin(), q_buffer.begin() + n);
             }
         }
         ImGui::Text("I samples:");
@@ -767,13 +782,28 @@ void ShowM2SDRPlotPanel()
         PlotLinesWithAxis("QplotAxis", g_q_data, n, -1.0f, 1.0f, ImVec2(768, 200), true);
     } else {
         // FFT
-        ImGui::Text("FFT Magnitude:");
-        PlotLinesWithAxis("FFTaxis", g_fft_data, n, 0.0f, 500.0f, ImVec2(512, 180), true);
+        //ImGui::Text("FFT Magnitude:");
+        //PlotLinesWithAxis("FFTaxis", g_fft_data, n, 0.0f, 500.0f, ImVec2(512, 180), true);
 
-        if (g_enable_waterfall) {
-            ImGui::Text("Waterfall (latest at bottom):");
-            ShowWaterfall();
+        //if (g_enable_waterfall) {
+        //    ImGui::Text("Waterfall (latest at bottom):");
+        //    ShowWaterfall();
+        //}
+        if (g_acquisition_started) {
+            {
+                std::lock_guard<std::mutex> lock(buffer_mutex);
+                if (!q_buffer.empty() && !i_buffer.empty() && (q_buffer.size() >= 1024) && (i_buffer.size() >= 1024)) {
+                    for (int i = 0;  i < n; i++) {
+                        std::complex<float> value(i_buffer[i], q_buffer[i]);
+                        g_fft_data[i] = std::abs(value);
+                    }
+                    i_buffer.erase(i_buffer.begin(), i_buffer.begin() + n);
+                    q_buffer.erase(q_buffer.begin(), q_buffer.begin() + n);
+                }
+            }
         }
+        ImGui::Text("I samples:");
+        PlotLinesWithAxis("IplotAxis", g_fft_data, n / 2, -1.0f, 1.0f, ImVec2(512, 100), true);
     }
 
     ImGui::End();
