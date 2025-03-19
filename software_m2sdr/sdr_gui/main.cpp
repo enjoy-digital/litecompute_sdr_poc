@@ -19,6 +19,8 @@
 #include <vector>
 #include <thread>
 #include <chrono>
+#include <deque>
+#include <mutex>
 
 // KissFFT
 #include "kiss_fft.h"
@@ -259,7 +261,7 @@ void ShowM2SDRRFPanel()
 // 4) Large Buffers for FFT
 // -----------------------------------------------------------------------------
 static const int MAX_FFT_SAMPLES = 1 << 20;
-static float g_i_data[MAX_FFT_SAMPLES];
+//static float g_i_data[MAX_FFT_SAMPLES];
 //static float g_q_data[MAX_FFT_SAMPLES];
 static float g_fft_data[MAX_FFT_SAMPLES];
 
@@ -329,19 +331,23 @@ static const float FIXED_PHASE_RAD = 3.1415926535f / 2.0f;
 
 static void GenerateFakeIQ(float freq_hz, float amplitude, float time_offset, int n)
 {
-    const float sample_rate = 1e6f;
-    if (n > MAX_FFT_SAMPLES) n = MAX_FFT_SAMPLES;
+    (void)freq_hz;
+    (void)amplitude;
+    (void=time_offset;
+    (void)n;
+    //const float sample_rate = 1e6f;
+    //if (n > MAX_FFT_SAMPLES) n = MAX_FFT_SAMPLES;
 
-    for (int i = 0; i < n; i++) {
-        float t = (float)i / sample_rate;
-        t += time_offset;
-        g_i_data[i] = amplitude * sinf(2.0f * 3.1415926535f * freq_hz * t);
-        //g_q_data[i] = amplitude * sinf(2.0f * 3.1415926535f * freq_hz * t + FIXED_PHASE_RAD);
-    }
-    for (int i = n; i < MAX_FFT_SAMPLES; i++) {
-        g_i_data[i] = 0.0f;
-        //g_q_data[i] = 0.0f;
-    }
+    //for (int i = 0; i < n; i++) {
+    //    float t = (float)i / sample_rate;
+    //    t += time_offset;
+    //    //g_i_data[i] = amplitude * sinf(2.0f * 3.1415926535f * freq_hz * t);
+    //    //g_q_data[i] = amplitude * sinf(2.0f * 3.1415926535f * freq_hz * t + FIXED_PHASE_RAD);
+    //}
+    //for (int i = n; i < MAX_FFT_SAMPLES; i++) {
+    //    //g_i_data[i] = 0.0f;
+    //    //g_q_data[i] = 0.0f;
+    //}
 }
 
 // Minimal axis-drawing function for a 2D line plot in ImGui.
@@ -553,16 +559,21 @@ static void ShowWaterfall()
 static bool g_acquisition_started = false;
 static bool g_acquisition_finish = false;
 static std::string fft_device_name = "/dev/m2sdr0";
-static bool fft_zero_copy = false;
+static bool fft_zero_copy = 0;
 
 // Data storage
 std::vector<float> data;
 float g_q_data[1024];
+float g_i_data[1024];
 float max_q_data = 0;
 float min_q_data = 0;
 
+std::deque<float> q_buffer;
+std::deque<float> i_buffer;
+std::mutex buffer_mutex;
+
 void UpdateData() {
-    static struct litepcie_dma_ctrl dma = {.use_writer = 1, .loopback = 1};
+    static struct litepcie_dma_ctrl dma = {.use_writer = 1};
     data.resize(1024); // FIXME: FFT order cant be hardcoded
 
     printf("Thread started\n");
@@ -570,13 +581,18 @@ void UpdateData() {
     // loop until application end
     while (!g_acquisition_finish) {
         printf("In the loop\n");
+
         // wait until stream start
         while (!g_acquisition_started)
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
         printf("start acquisition\n");
         if (g_acquisition_finish) // Stop if requested
             break;
+
         printf("start acquisition2\n");
+        q_buffer.clear();
+        i_buffer.clear();
 
         /* Initialize DMA. */
         if (litepcie_dma_init(&dma, fft_device_name.c_str(), fft_zero_copy))
@@ -595,32 +611,22 @@ void UpdateData() {
                 if (!g_acquisition_started)
                     break;
                 /* Get Read buffer. */
-                int16_t *buf_rd = (int16_t *)litepcie_dma_next_read_buffer(&dma);
+                char *buf_rd = litepcie_dma_next_read_buffer(&dma);
                 /* Break when no buffer available for Read. */
                 if (!buf_rd) {
                     break;
                 }
                 min_q_data = 32767;
                 max_q_data = -32767;
-                //for (int i = 0; i < DMA_BUFFER_SIZE; i+=2048*2) {
-                //    for (int ii = 0; ii < 1024; ii++) {
-                //        int16_t re = buf_rd[i+ii * 2 + 0];
-                //        int16_t im = buf_rd[i+ii * 2 + 1];
-                //        //int16_t re = (((int16_t)buf_rd[i+ii*4 + 0]) << 0) | (((int16_t)buf_rd[i+ii*4+1]) << 8);
-                //        //int16_t im = (((int16_t)buf_rd[i+ii*4 + 2]) << 0) | (((int16_t)buf_rd[i+ii*4+3]) << 8);
-                //        std::complex<float> value((float)re, (float)im);
-                //        data[ii] = std::abs(value);
-                //    }
-                //}
-                for (int i = 0; i < 1024; i++) {
-                    //g_q_data[i] = (float)((((int16_t)buf_rd[i*4 + 0]) << 0) | (((int16_t)buf_rd[i+4+1]) << 8));
-                    int16_t t = buf_rd[i*4];
-                    //t = ((t &0x00ff) << 8) | ((t >> 8) & 0x0ff);
-                    g_q_data[i] = static_cast<float>(t) / 2047.0;
-                    if (t > max_q_data)
-                        max_q_data = t;
-                    if (t < min_q_data)
-                        min_q_data = t;
+                {
+                    int16_t *samples = (int16_t *)buf_rd;
+                    size_t num_samples = DMA_BUFFER_SIZE / (2 * 2 * sizeof(int16_t)); // 2x I/Q pairs
+
+                    std::lock_guard<std::mutex> lock(buffer_mutex);
+                    for (size_t i = 0; i < num_samples; i++) {
+                        i_buffer.push_back((float)samples[4 * i + 0] / 2047.0f); // I, normalized
+                        q_buffer.push_back((float)samples[4 * i + 1] / 2047.0f); // Q, normalized
+                    }
                 }
             }
         }
@@ -724,7 +730,7 @@ void ShowM2SDRPlotPanel()
         if (litepcie_dma_init(&dma, "/dev/m2sdr0", false))
             exit(1);
     } else {
-        memset(g_i_data, 0, sizeof(g_i_data));
+        //memset(g_i_data, 0, sizeof(g_i_data));
         //memset(g_q_data, 0, sizeof(g_q_data));
     }
 
@@ -742,9 +748,21 @@ void ShowM2SDRPlotPanel()
 
     if (g_plot_mode == 0) {
         // Raw I/Q
-        ImGui::Text("I samples:");
-        PlotLinesWithAxis("IplotAxis", data.data(), n/2, -1.0f, 500.0f, ImVec2(768, 200), true);
+        //PlotLinesWithAxis("IplotAxis", data.data(), n/2, -1.0f, 500.0f, ImVec2(768, 200), true);
         //PlotLinesWithAxis("IplotAxis", g_i.data, n, -1.0f, 1.0f, ImVec2(512, 100), true);
+        {
+            std::lock_guard<std::mutex> lock(buffer_mutex);
+            if (!q_buffer.empty() && !i_buffer.empty() && (q_buffer.size() >= 1024) && (i_buffer.size() >= 1024)) {
+                for (int i = 0;  i < n; i++) {
+                    g_i_data[i] = i_buffer[i];
+                    g_q_data[i] = q_buffer[i];
+                }
+                i_buffer.erase(i_buffer.begin(), i_buffer.begin() + n);
+                q_buffer.erase(q_buffer.begin(), q_buffer.begin() + n);
+            }
+        }
+        ImGui::Text("I samples:");
+        PlotLinesWithAxis("IplotAxis", g_i_data, n, -1.0f, 1.0f, ImVec2(512, 100), true);
         ImGui::Text("Q samples:");
         PlotLinesWithAxis("QplotAxis", g_q_data, n, -1.0f, 1.0f, ImVec2(768, 200), true);
     } else {
