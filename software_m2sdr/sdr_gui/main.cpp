@@ -260,7 +260,7 @@ void ShowM2SDRRFPanel()
 // -----------------------------------------------------------------------------
 static const int MAX_FFT_SAMPLES = 1 << 20;
 static float g_i_data[MAX_FFT_SAMPLES];
-static float g_q_data[MAX_FFT_SAMPLES];
+//static float g_q_data[MAX_FFT_SAMPLES];
 static float g_fft_data[MAX_FFT_SAMPLES];
 
 // -----------------------------------------------------------------------------
@@ -336,11 +336,11 @@ static void GenerateFakeIQ(float freq_hz, float amplitude, float time_offset, in
         float t = (float)i / sample_rate;
         t += time_offset;
         g_i_data[i] = amplitude * sinf(2.0f * 3.1415926535f * freq_hz * t);
-        g_q_data[i] = amplitude * sinf(2.0f * 3.1415926535f * freq_hz * t + FIXED_PHASE_RAD);
+        //g_q_data[i] = amplitude * sinf(2.0f * 3.1415926535f * freq_hz * t + FIXED_PHASE_RAD);
     }
     for (int i = n; i < MAX_FFT_SAMPLES; i++) {
         g_i_data[i] = 0.0f;
-        g_q_data[i] = 0.0f;
+        //g_q_data[i] = 0.0f;
     }
 }
 
@@ -552,14 +552,17 @@ static void ShowWaterfall()
 // -----------------------------------------------------------------------------
 static bool g_acquisition_started = false;
 static bool g_acquisition_finish = false;
-static std::string fft_device_name = "/dev/m2sdr1";
+static std::string fft_device_name = "/dev/m2sdr0";
 static bool fft_zero_copy = false;
 
 // Data storage
 std::vector<float> data;
+float g_q_data[1024];
+float max_q_data = 0;
+float min_q_data = 0;
 
 void UpdateData() {
-    static struct litepcie_dma_ctrl dma = {.use_writer = 1};
+    static struct litepcie_dma_ctrl dma = {.use_writer = 1, .loopback = 1};
     data.resize(1024); // FIXME: FFT order cant be hardcoded
 
     printf("Thread started\n");
@@ -592,18 +595,32 @@ void UpdateData() {
                 if (!g_acquisition_started)
                     break;
                 /* Get Read buffer. */
-                char *buf_rd = litepcie_dma_next_read_buffer(&dma);
+                int16_t *buf_rd = (int16_t *)litepcie_dma_next_read_buffer(&dma);
                 /* Break when no buffer available for Read. */
                 if (!buf_rd) {
                     break;
                 }
-                for (int i = 0; i < DMA_BUFFER_SIZE; i+=2048*2) {
-                    for (int ii = 0; ii < 1024; ii++) {
-                        int16_t re = (((int16_t)buf_rd[i+ii*4 + 0]) << 0) | (((int16_t)buf_rd[i+ii*4+1]) << 8);
-                        int16_t im = (((int16_t)buf_rd[i+ii*4 + 2]) << 0) | (((int16_t)buf_rd[i+ii*4+3]) << 8);
-                        std::complex<float> value((float)re, (float)im);
-                        data[ii] = std::abs(value);
-                    }
+                min_q_data = 32767;
+                max_q_data = -32767;
+                //for (int i = 0; i < DMA_BUFFER_SIZE; i+=2048*2) {
+                //    for (int ii = 0; ii < 1024; ii++) {
+                //        int16_t re = buf_rd[i+ii * 2 + 0];
+                //        int16_t im = buf_rd[i+ii * 2 + 1];
+                //        //int16_t re = (((int16_t)buf_rd[i+ii*4 + 0]) << 0) | (((int16_t)buf_rd[i+ii*4+1]) << 8);
+                //        //int16_t im = (((int16_t)buf_rd[i+ii*4 + 2]) << 0) | (((int16_t)buf_rd[i+ii*4+3]) << 8);
+                //        std::complex<float> value((float)re, (float)im);
+                //        data[ii] = std::abs(value);
+                //    }
+                //}
+                for (int i = 0; i < 1024; i++) {
+                    //g_q_data[i] = (float)((((int16_t)buf_rd[i*4 + 0]) << 0) | (((int16_t)buf_rd[i+4+1]) << 8));
+                    int16_t t = buf_rd[i*4];
+                    //t = ((t &0x00ff) << 8) | ((t >> 8) & 0x0ff);
+                    g_q_data[i] = static_cast<float>(t) / 2047.0;
+                    if (t > max_q_data)
+                        max_q_data = t;
+                    if (t < min_q_data)
+                        min_q_data = t;
                 }
             }
         }
@@ -611,6 +628,7 @@ void UpdateData() {
 
         /* Cleanup DMA. */
         litepcie_dma_cleanup(&dma);
+        dma.writer_enable = 0;
     }
 
 }
@@ -626,7 +644,9 @@ static int  g_waterfall_framecount = 0;
 
 void ShowM2SDRPlotPanel()
 {
-    ImGui::SetNextWindowPos(ImVec2(730, 240), ImGuiCond_Always);
+    //ImGui::SetNextWindowPos(ImVec2(730, 240), ImGuiCond_Always);
+    //ImGui::SetNextWindowSize(ImVec2(1024, 800), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(1024, 800), ImGuiCond_Always);
 
     ImGui::Begin("M2SDR Plot Panel");
@@ -705,11 +725,11 @@ void ShowM2SDRPlotPanel()
             exit(1);
     } else {
         memset(g_i_data, 0, sizeof(g_i_data));
-        memset(g_q_data, 0, sizeof(g_q_data));
+        //memset(g_q_data, 0, sizeof(g_q_data));
     }
 
     if (g_plot_mode == 1) {
-        ComputeFFT(g_i_data, g_q_data, g_fft_data, n);
+        //ComputeFFT(g_i_data, g_q_data, g_fft_data, n);
         if (g_enable_waterfall) {
             g_waterfall_framecount++;
             if (g_waterfall_framecount % g_waterfall_speed == 0) {
@@ -723,10 +743,10 @@ void ShowM2SDRPlotPanel()
     if (g_plot_mode == 0) {
         // Raw I/Q
         ImGui::Text("I samples:");
-        PlotLinesWithAxis("IplotAxis", data.data(), n/2, -1.0f, 50.0f, ImVec2(512, 100), true);
+        PlotLinesWithAxis("IplotAxis", data.data(), n/2, -1.0f, 500.0f, ImVec2(768, 200), true);
         //PlotLinesWithAxis("IplotAxis", g_i.data, n, -1.0f, 1.0f, ImVec2(512, 100), true);
         ImGui::Text("Q samples:");
-        PlotLinesWithAxis("QplotAxis", g_q_data, n, -1.0f, 1.0f, ImVec2(512, 100), true);
+        PlotLinesWithAxis("QplotAxis", g_q_data, n, -1.0f, 1.0f, ImVec2(768, 200), true);
     } else {
         // FFT
         ImGui::Text("FFT Magnitude:");
@@ -963,19 +983,19 @@ int main(int, char**)
         ImGui::NewFrame();
 
         // The I/Q Record panel
-        ShowM2SDRIQRecordPanel();
+        //ShowM2SDRIQRecordPanel();
 
         // The I/Q Play panel
-        ShowM2SDRIQPlayPanel();
+        //ShowM2SDRIQPlayPanel();
 
         // The RF Utility panel
-        ShowM2SDRRFPanel();
+        //ShowM2SDRRFPanel();
 
         // The Plot panel (FFT, Waterfall, etc.)
         ShowM2SDRPlotPanel();
 
         // Our new Node Diagram
-        ShowM2SDRNodeDiagramPanel();
+        //ShowM2SDRNodeDiagramPanel();
 
         // Rendering
         ImGui::Render();
