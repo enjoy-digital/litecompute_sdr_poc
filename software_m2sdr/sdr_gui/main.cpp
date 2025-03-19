@@ -460,10 +460,15 @@ static void PlotLinesWithAxis(const char* label,
 #define WATERFALL_WIDTH 1024
 #define WATERFALL_HEIGHT 256
 
-static float g_waterfall[WATERFALL_HEIGHT][WATERFALL_WIDTH];
-static int   g_waterfall_nextrow = 0;
-static bool  g_enable_waterfall  = false;
-static int   g_waterfall_speed   = 1;   // frames between lines
+static float g_raw_waterfall[WATERFALL_HEIGHT][WATERFALL_WIDTH];
+static int   g_raw_waterfall_nextrow = 0;
+static bool  g_raw_enable_waterfall  = false;
+static int   g_raw_waterfall_speed   = 1;   // frames between lines
+
+static float g_fft_waterfall[WATERFALL_HEIGHT][WATERFALL_WIDTH];
+static int   g_fft_waterfall_nextrow = 0;
+static bool  g_fft_enable_waterfall  = false;
+static int   g_fft_waterfall_speed   = 1;   // frames between lines
 
 // Let's define 5 color maps
 static const char* s_colormap_options[] = {
@@ -473,18 +478,20 @@ static const char* s_colormap_options[] = {
     "Plasma",
     "Magma"
 };
-static int g_color_map_idx = 0; // default: Grayscale
+static int g_fft_color_map_idx = 0; // default: Grayscale
+static int g_raw_color_map_idx = 0; // default: Grayscale
 
-static void AddWaterfallRow(const float* new_line, int length)
+static void AddWaterfallRow(int *g_waterfall_nextrow, float (&g_waterfall)[WATERFALL_HEIGHT][WATERFALL_WIDTH],
+        const float* new_line, int length)
 {
     int copy_len = (length > WATERFALL_WIDTH) ? WATERFALL_WIDTH : length;
-    g_waterfall_nextrow = (g_waterfall_nextrow + 1) % WATERFALL_HEIGHT;
+    *g_waterfall_nextrow = (*g_waterfall_nextrow + 1) % WATERFALL_HEIGHT;
 
     for (int i = 0; i < copy_len; i++) {
-        g_waterfall[g_waterfall_nextrow][i] = new_line[i];
+        g_waterfall[*g_waterfall_nextrow][i] = new_line[i];
     }
     for (int i = copy_len; i < WATERFALL_WIDTH; i++) {
-        g_waterfall[g_waterfall_nextrow][i] = 0.0f;
+        g_waterfall[*g_waterfall_nextrow][i] = 0.0f;
     }
 }
 
@@ -587,7 +594,8 @@ static ImU32 MagnitudeToColor(float mag, float maxVal, int map_idx)
 }
 
 // We'll draw a child region (WATERFALL_WIDTH x WATERFALL_HEIGHT) 
-static void ShowWaterfall()
+static void ShowWaterfall(float (&g_waterfall)[WATERFALL_HEIGHT][WATERFALL_WIDTH],
+        int g_waterfall_nextrow, int g_color_map_idx)
 {
     ImGui::BeginChild("WaterfallView", ImVec2(WATERFALL_WIDTH, WATERFALL_HEIGHT), true);
 
@@ -645,7 +653,7 @@ void UpdateData(int id, const char *device_name,
         int step, float scaling, std::mutex *buffer_mutex,
         std::deque<float> &i_buff, std::deque<float> &q_buff)
 {
-    static struct litepcie_dma_ctrl dma = {.use_writer = 1};
+    struct litepcie_dma_ctrl dma = {.use_writer = 1};
 
     printf("Thread started %d\n", id);
 
@@ -666,7 +674,7 @@ void UpdateData(int id, const char *device_name,
         i_buff.clear();
 
         /* Initialize DMA. */
-		printf("Thread%d: %s\n", id, device_name);
+        printf("Thread%d: %s\n", id, device_name);
         if (litepcie_dma_init(&dma, device_name, fft_zero_copy))
             exit(1);
 
@@ -723,7 +731,7 @@ void rawIQThread()
 {
     UpdateData(2, raw_iq_device_name, &g_thread_raw_iq_finish, &g_thread_raw_iq_started,
         4, 2047, &raw_buffer_mutex,
-		std::ref(raw_i_buffer), std::ref(raw_q_buffer));
+        std::ref(raw_i_buffer), std::ref(raw_q_buffer));
 }
 // -----------------------------------------------------------------------------
 // 8) Master Plot Panel
@@ -731,8 +739,7 @@ void rawIQThread()
 static bool g_enable_fake_gen = false;
 static bool g_animate_wave   = false;
 
-static int  g_waterfall_framecount = 0; 
-
+static int  g_raw_waterfall_framecount = 0;
 void ShowM2SDRRawIQPlotPanel()
 {
     ImGui::SetNextWindowPos(ImVec2(10, 230), ImGuiCond_Always);
@@ -740,7 +747,12 @@ void ShowM2SDRRawIQPlotPanel()
 
     ImGui::Begin("M2SDR Plot Panel");
 
-	ImGui::InputText("Device", raw_iq_device_name, IM_ARRAYSIZE(raw_iq_device_name));
+    ImGui::Text("Plot Mode:");
+    ImGui::RadioButton("Raw I/Q", &g_plot_mode, 0);
+    ImGui::SameLine();
+    ImGui::RadioButton("FFT", &g_plot_mode, 1);
+
+    ImGui::InputText("Device", raw_iq_device_name, IM_ARRAYSIZE(raw_iq_device_name));
     ImGui::Separator();
 
     ImGui::Checkbox("Enable Thread", &g_thread_raw_iq_started);
@@ -749,18 +761,18 @@ void ShowM2SDRRawIQPlotPanel()
 
     // Waterfall options
     if (g_plot_mode == 1) {
-        ImGui::Checkbox("Waterfall", &g_enable_waterfall);
+        ImGui::Checkbox("Waterfall", &g_raw_enable_waterfall);
         ImGui::SameLine();
-        ImGui::InputInt("Wf Speed", &g_waterfall_speed);
-        if (g_waterfall_speed < 1) g_waterfall_speed = 1;
+        ImGui::InputInt("Wf Speed", &g_raw_waterfall_speed);
+        if (g_raw_waterfall_speed < 1) g_raw_waterfall_speed = 1;
 
         // Color map selection
         ImGui::Text("Color Map:");
-        if (ImGui::BeginCombo("##ColorMapCombo", s_colormap_options[g_color_map_idx])) {
+        if (ImGui::BeginCombo("##ColorMapCombo", s_colormap_options[g_raw_color_map_idx])) {
             for (int i = 0; i < IM_ARRAYSIZE(s_colormap_options); i++) {
-                bool is_selected = (i == g_color_map_idx);
+                bool is_selected = (i == g_raw_color_map_idx);
                 if (ImGui::Selectable(s_colormap_options[i], is_selected)) {
-                    g_color_map_idx = i;
+                    g_raw_color_map_idx = i;
                 }
                 if (is_selected) {
                     ImGui::SetItemDefaultFocus();
@@ -769,18 +781,34 @@ void ShowM2SDRRawIQPlotPanel()
             ImGui::EndCombo();
         }
     } else {
-        g_enable_waterfall = false; 
+        g_raw_enable_waterfall = false;
     }
 
     ImGui::Separator();
 
     int n = 1024;
+    if (g_thread_raw_iq_started) {
+        {
+            std::lock_guard<std::mutex> lock(raw_buffer_mutex);
+            if (!raw_q_buffer.empty() && !raw_i_buffer.empty() &&
+                    (raw_q_buffer.size() >= 1024) && (raw_i_buffer.size() >= 1024)) {
+                for (int i = 0;  i < n; i++) {
+                    g_raw_i_data[i] = raw_i_buffer[i];
+                    g_raw_q_data[i] = raw_q_buffer[i];
+                }
+                // Remove all unused samples
+                raw_i_buffer.clear();
+                raw_q_buffer.clear();
+            }
+        }
+    }
 
     if (g_plot_mode == 1) {
-        if (g_enable_waterfall) {
-            g_waterfall_framecount++;
-            if (g_waterfall_framecount % g_waterfall_speed == 0) {
-                AddWaterfallRow(g_raw_data, n);
+        ComputeFFT(g_raw_i_data, g_raw_q_data, g_raw_data, n);
+        if (g_raw_enable_waterfall) {
+            g_raw_waterfall_framecount++;
+            if (g_raw_waterfall_framecount % g_raw_waterfall_speed == 0) {
+                AddWaterfallRow(&g_raw_waterfall_nextrow, g_raw_waterfall, g_raw_data, n);
             }
         }
     }
@@ -789,56 +817,28 @@ void ShowM2SDRRawIQPlotPanel()
 
     if (g_plot_mode == 0) {
         // Raw I/Q
-        if (g_thread_raw_iq_started) {
-            {
-                std::lock_guard<std::mutex> lock(raw_buffer_mutex);
-                if (!raw_q_buffer.empty() && !raw_i_buffer.empty() &&
-						(raw_q_buffer.size() >= 1024) && (raw_i_buffer.size() >= 1024)) {
-                    for (int i = 0;  i < n; i++) {
-                        g_raw_i_data[i] = raw_i_buffer[i];
-                        g_raw_q_data[i] = raw_q_buffer[i];
-                    }
-                    // Remove all unused samples
-                    raw_i_buffer.clear();
-                    raw_q_buffer.clear();
-                }
-            }
-        }
         ImGui::Text("I samples:");
         PlotLinesWithAxis("IplotAxis", g_raw_i_data, n, -1.0f, 1.0f, ImVec2(512, 100), true);
         ImGui::Text("Q samples:");
         PlotLinesWithAxis("QplotAxis", g_raw_q_data, n, -1.0f, 1.0f, ImVec2(768, 200), true);
-    //} else {
-    //    // FFT
-    //    float max_raw = 0;
-    //    if (g_thread_raw_started) {
-    //        {
-    //            std::lock_guard<std::mutex> lock(raw_buffer_mutex);
-    //            if (!raw_q_buffer.empty() && !raw_i_buffer.empty() &&
-	//					(raw_q_buffer.size() >= 1024) && (raw_i_buffer.size() >= 1024)) {
-    //                for (int i = 0;  i < n; i++) {
-    //                    std::complex<float> value(raw_i_buffer[i], raw_q_buffer[i]);
-    //                    g_raw_data[i] = std::abs(value);
-    //                    if (g_raw_data[i] > max_raw)
-    //                        max_raw = g_raw_data[i];
-    //                }
-    //                // Remove all unused samples
-    //                uint32_t length = (raw_i_buffer.size() / n) * n;
-    //                raw_i_buffer.erase(raw_i_buffer.begin(), raw_i_buffer.begin() + length);
-    //                raw_q_buffer.erase(raw_q_buffer.begin(), raw_q_buffer.begin() + length);
-    //            }
-    //        }
-    //    }
-    //    ImGui::Text("FFT Magnitude:");
-    //    PlotLinesWithAxis("IplotAxis", g_raw_data, n, -2.0f, max_raw + 10, ImVec2(768, 300), true);
-    //    if (g_enable_waterfall) {
-    //        ImGui::Text("Waterfall (latest at bottom):");
-    //        ShowWaterfall();
-    //    }
+    } else {
+        // FFT
+        ImGui::Text("FFT Magnitude:");
+        PlotLinesWithAxis("FFTAxis", g_raw_data, n, -2.0f, 500.0, ImVec2(768, 300), true);
+
+        if (g_raw_enable_waterfall) {
+            ImGui::Text("Waterfall (latest at bottom):");
+            ShowWaterfall(g_raw_waterfall, g_raw_waterfall_nextrow, g_raw_color_map_idx);
+        }
     }
 
     ImGui::End();
 }
+
+// -----------------------------------------------------------------------------
+// FFT Plot Panel
+// -----------------------------------------------------------------------------
+static int  g_fft_waterfall_framecount = 0;
 
 void ShowM2SDRFFTPlotPanel()
 {
@@ -847,11 +847,7 @@ void ShowM2SDRFFTPlotPanel()
 
     ImGui::Begin("M2SDR FFT Plot Panel");
 
-    //ImGui::Text("Plot Mode:");
-    //ImGui::RadioButton("Raw I/Q", &g_plot_mode, 0); 
-    //ImGui::SameLine();
-    //ImGui::RadioButton("FFT", &g_plot_mode, 1);
-	ImGui::InputText("Device", fft_device_name, IM_ARRAYSIZE(fft_device_name));
+    ImGui::InputText("Device", fft_device_name, IM_ARRAYSIZE(fft_device_name));
     ImGui::Separator();
 
     ImGui::Checkbox("Enable Thread", &g_thread_fft_started);
@@ -859,18 +855,18 @@ void ShowM2SDRFFTPlotPanel()
     ImGui::Separator();
 
     // Waterfall options
-    ImGui::Checkbox("Waterfall", &g_enable_waterfall);
+    ImGui::Checkbox("Waterfall", &g_fft_enable_waterfall);
     ImGui::SameLine();
-    ImGui::InputInt("Wf Speed", &g_waterfall_speed);
-    if (g_waterfall_speed < 1) g_waterfall_speed = 1;
+    ImGui::InputInt("Wf Speed", &g_fft_waterfall_speed);
+    if (g_fft_waterfall_speed < 1) g_fft_waterfall_speed = 1;
 
     // Color map selection
     ImGui::Text("Color Map:");
-    if (ImGui::BeginCombo("##ColorMapCombo", s_colormap_options[g_color_map_idx])) {
+    if (ImGui::BeginCombo("##ColorMapCombo", s_colormap_options[g_fft_color_map_idx])) {
         for (int i = 0; i < IM_ARRAYSIZE(s_colormap_options); i++) {
-            bool is_selected = (i == g_color_map_idx);
+            bool is_selected = (i == g_fft_color_map_idx);
             if (ImGui::Selectable(s_colormap_options[i], is_selected)) {
-                g_color_map_idx = i;
+                g_fft_color_map_idx = i;
             }
             if (is_selected) {
                 ImGui::SetItemDefaultFocus();
@@ -883,10 +879,10 @@ void ShowM2SDRFFTPlotPanel()
 
     int n = 1024;
 
-    if (g_enable_waterfall) {
-        g_waterfall_framecount++;
-        if (g_waterfall_framecount % g_waterfall_speed == 0) {
-            AddWaterfallRow(g_fft_data, n);
+    if (g_fft_enable_waterfall) {
+        g_fft_waterfall_framecount++;
+        if (g_fft_waterfall_framecount % g_fft_waterfall_speed == 0) {
+            AddWaterfallRow(&g_fft_waterfall_nextrow, g_fft_waterfall, g_fft_data, n);
         }
     }
 
@@ -898,7 +894,7 @@ void ShowM2SDRFFTPlotPanel()
         {
             std::lock_guard<std::mutex> lock(fft_buffer_mutex);
             if (!fft_q_buffer.empty() && !fft_i_buffer.empty() &&
-					(fft_q_buffer.size() >= 1024) && (fft_i_buffer.size() >= 1024)) {
+                    (fft_q_buffer.size() >= 1024) && (fft_i_buffer.size() >= 1024)) {
                 for (int i = 0;  i < n; i++) {
                     std::complex<float> value(fft_i_buffer[i], fft_q_buffer[i]);
                     g_fft_data[i] = std::abs(value);
@@ -914,9 +910,9 @@ void ShowM2SDRFFTPlotPanel()
     }
     ImGui::Text("FFT Magnitude:");
     PlotLinesWithAxis("IplotAxis", g_fft_data, n, -2.0f, max_fft + 10, ImVec2(768, 300), true);
-    if (g_enable_waterfall) {
+    if (g_fft_enable_waterfall) {
         ImGui::Text("Waterfall (latest at bottom):");
-        ShowWaterfall();
+        ShowWaterfall(g_fft_waterfall, g_fft_waterfall_nextrow, g_fft_color_map_idx);
     }
 
     ImGui::End();
