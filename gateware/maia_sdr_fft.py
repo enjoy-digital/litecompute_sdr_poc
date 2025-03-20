@@ -181,6 +181,11 @@ class MaiaSDRFFT(LiteXModule):
             )
         )
 
+    def add_constants(self, soc):
+        soc.add_constant(f"MAIA_SDR_FFT_RADIX_{self.radix}")
+        soc.add_constant(f"MAIA_SDR_FFT_ORDER",      2**self.order_log2)
+        soc.add_constant(f"MAIA_SDR_FFT_ORDER_LOG2", self.order_log2)
+
     def do_finalize(self):
         src_dir  = os.path.join(self.platform.output_dir, "maia_hdl_fft")
         curr_dir = os.getcwd()

@@ -477,6 +477,7 @@ class BaseSoC(SoCMini):
                 cmult3x     = False,
                 clk_domain  = "sys",
             )
+            self.fft.add_constants(self)
 
             # Window Clocking.
             # ----------------
