@@ -16,7 +16,7 @@ git clone https://github.com/ocornut/imgui.git
 
 `tiny-process-library`
 ```bash
-https://gitlab.com/eidheim/tiny-process-library
+git clone https://gitlab.com/eidheim/tiny-process-library
 ```
 
 ## [> Build

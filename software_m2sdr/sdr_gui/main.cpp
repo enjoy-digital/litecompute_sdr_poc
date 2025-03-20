@@ -10,6 +10,7 @@
 #include <string>
 #include "imnodes.h"
 
+#include <bitset>
 #include <cstdio>    // for printf
 #include <cstdlib>   // for exit
 #include <cstdint>   // for intxx_t
@@ -836,6 +837,47 @@ void ShowM2SDRRawIQPlotPanel()
 }
 
 // -----------------------------------------------------------------------------
+// FFT Plot Panel Utilities
+// -----------------------------------------------------------------------------
+
+std::vector<int> fft_invert_addr;
+
+// Function to invert bits
+int bit_invert(int n, int nbits, int radix_log2) {
+    // Convert integer to binary string with leading zeros
+    std::bitset<32> bits(n);
+    std::string bits_str = bits.to_string().substr(32 - nbits);
+
+    // Create a vector to hold the bits
+    std::vector<char> bits_arr(bits_str.begin(), bits_str.end());
+
+    // Calculate the number of groups
+    int num_groups = nbits / radix_log2;
+
+    // Invert the order of the groups
+    for (int i = 0; i < num_groups / 2; ++i) {
+        for (int j = 0; j < radix_log2; ++j) {
+            std::swap(bits_arr[i * radix_log2 + j], bits_arr[(num_groups - 1 - i) * radix_log2 + j]);
+        }
+    }
+
+    // Convert the vector back to a string
+    std::string inverted_str(bits_arr.begin(), bits_arr.end());
+
+    // Convert the binary string back to an integer
+    int result = std::stoi(inverted_str, nullptr, 2);
+
+    return result;
+}
+
+void fill_fft_invert_addr()
+{
+    for (int n = 0; n < 1024; n++) {
+        fft_invert_addr.push_back(bit_invert(n, 10, 1));
+    }
+}
+
+// -----------------------------------------------------------------------------
 // FFT Plot Panel
 // -----------------------------------------------------------------------------
 static int  g_fft_waterfall_framecount = 0;
@@ -896,10 +938,11 @@ void ShowM2SDRFFTPlotPanel()
             if (!fft_q_buffer.empty() && !fft_i_buffer.empty() &&
                     (fft_q_buffer.size() >= 1024) && (fft_i_buffer.size() >= 1024)) {
                 for (int i = 0;  i < n; i++) {
+                    int addr = fft_invert_addr[i];
                     std::complex<float> value(fft_i_buffer[i], fft_q_buffer[i]);
-                    g_fft_data[i] = std::abs(value);
+                    g_fft_data[addr] = std::abs(value);
                     if (g_fft_data[i] > max_fft)
-                        max_fft = g_fft_data[i];
+                        max_fft = g_fft_data[addr];
                 }
                 // Remove all unused samples
                 uint32_t length = (fft_i_buffer.size() / n) * n;
@@ -1117,6 +1160,9 @@ int main(int, char**)
 
     ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
     ImGui_ImplOpenGL3_Init("#version 130");
+
+    // Prepare Bit Reversal address (Maia SDR FFT)
+    fill_fft_invert_addr();
 
     // Start background data reading thread
     std::thread fft_data_thread(fftThread);
