@@ -872,8 +872,8 @@ int bit_invert(int n, int nbits, int radix_log2) {
 
 void fill_fft_invert_addr()
 {
-    for (int n = 0; n < 1024; n++) {
-        fft_invert_addr.push_back(bit_invert(n, 10, 1));
+    for (int n = 0; n < MAIA_SDR_FFT_ORDER; n++) {
+        fft_invert_addr.push_back(bit_invert(n, MAIA_SDR_FFT_ORDER_LOG2, MAIA_SDR_FFT_RADIX_LOG2));
     }
 }
 
@@ -919,7 +919,7 @@ void ShowM2SDRFFTPlotPanel()
 
     ImGui::Separator();
 
-    int n = 1024;
+    const int n = MAIA_SDR_FFT_ORDER;
 
     if (g_fft_enable_waterfall) {
         g_fft_waterfall_framecount++;
@@ -936,7 +936,7 @@ void ShowM2SDRFFTPlotPanel()
         {
             std::lock_guard<std::mutex> lock(fft_buffer_mutex);
             if (!fft_q_buffer.empty() && !fft_i_buffer.empty() &&
-                    (fft_q_buffer.size() >= 1024) && (fft_i_buffer.size() >= 1024)) {
+                    (fft_q_buffer.size() >= n) && (fft_i_buffer.size() >= n)) {
                 for (int i = 0;  i < n; i++) {
                     int addr = fft_invert_addr[i];
                     std::complex<float> value(fft_i_buffer[i], fft_q_buffer[i]);
