@@ -21,8 +21,8 @@ def fft_generator(output_path, data_width=12, order_log2=12, radix=4, window=Non
     from amaranth.back.verilog import convert
     from maia_hdl.pluto_platform import PlutoPlatform
     from maia_hdl.fft import FFT
-    w = window if window is not None else 'nowindow'
-    truncates = {
+    w         = window if window is not None else 'nowindow'
+    truncates = { # FIXME: reintegrate or user defined
         2: [0] * (order_log2 // 2) + [1] * (order_log2 // 2),
         4: [0] * (order_log2 // 4) + [2] * (order_log2 // 4),
         'R22': (
@@ -73,10 +73,10 @@ class MaiaSDRFFT(LiteXModule):
         # Prepare/Compute output data width --------------------------------------------------------
         # FIXME: considerer truncates is not used
         # FIXME: copied from FFT constructor
-        bfly_trunc = {2: 1, 4: 2, 'R22': [1, 1]}[radix]
-        radix_log2 = {2: 1, 4: 2, 'R22': 2}[radix]
+        bfly_trunc = {'2': 1, '4': 2, 'R22': [1, 1]}[radix]
+        radix_log2 = {'2': 1, '4': 2, 'R22': 2}[radix]
         nstages    = order_log2 // radix_log2
-        truncates  = [bfly_trunc] * nstages
+        truncates  = [bfly_trunc] * nstages # FIXME: must be coherent with fft_generator
         widths     = [data_width]
         w          = data_width
         for j in range(nstages):
@@ -96,18 +96,22 @@ class MaiaSDRFFT(LiteXModule):
         self.platform   = platform
         self.data_width = data_width
         self.order_log2 = order_log2
-        self.radix      = radix
+        if radix == "R22":
+            self.radix  = radix
+        else:
+            self.radix  = int(radix)
+        self.radix_log2 = radix_log2
         self.window     = window
         self.cmult3x    = cmult3x
 
         # # #
 
-        assert radix   in [2, 4, 'R22']
-        assert window  in [None, 'blackmanharris']
-        assert cmult3x in [False, True]
+        assert self.radix   in [2, 4, 'R22']
+        assert self.window  in [None, 'blackmanharris']
+        assert self.cmult3x in [False, True]
 
         self.ip_name = "fft_radix{radix}_{window}{cmult3x}".format(
-            radix   = radix,
+            radix   = self.radix,
             window  = {True: "nowindow", False: "blackmanharris"}[window is None],
             cmult3x = {True:"_cmult3x",  False: ""}[cmult3x],
         )
@@ -185,6 +189,7 @@ class MaiaSDRFFT(LiteXModule):
         soc.add_constant(f"MAIA_SDR_FFT_RADIX_{self.radix}")
         soc.add_constant(f"MAIA_SDR_FFT_ORDER",      2**self.order_log2)
         soc.add_constant(f"MAIA_SDR_FFT_ORDER_LOG2", self.order_log2)
+        soc.add_constant(f"MAIA_SDR_FFT_RADIX_LOG2", self.radix_log2)
 
     def do_finalize(self):
         src_dir  = os.path.join(self.platform.output_dir, "maia_hdl_fft")
