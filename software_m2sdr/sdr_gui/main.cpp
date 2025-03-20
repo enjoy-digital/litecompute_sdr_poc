@@ -941,7 +941,7 @@ void ShowM2SDRFFTPlotPanel()
                     int addr = fft_invert_addr[i];
                     std::complex<float> value(fft_i_buffer[i], fft_q_buffer[i]);
                     g_fft_data[addr] = std::abs(value);
-                    if (g_fft_data[i] > max_fft)
+                    if (g_fft_data[addr] > max_fft)
                         max_fft = g_fft_data[addr];
                 }
                 // Remove all unused samples
