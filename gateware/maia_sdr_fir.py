@@ -16,6 +16,33 @@ from litex.soc.interconnect.csr import *
 
 from .clk_nx_common_edge import ClkNxCommonEdge
 
+
+# Utils --------------------------------------------------------------------------------------------
+
+def compute_coefficients(operations=16, decimation=1, odd_operations=False, num_coeffs=256, taps=[]):
+
+    num_mult = 2 * operations
+    if odd_operations:
+        num_mult -= 1
+
+    if len(taps) == 0:
+        num_taps = decimation * num_mult
+        taps     = np.arange(1, num_taps // 2 + 1)
+        taps     = np.ones(num_taps // 2 + 1)
+        taps     = np.concatenate((taps, taps[::-1]))
+
+    coeffs = np.zeros(num_coeffs, 'int')
+    op     = operations
+    dec    = decimation
+
+    for j in range(op):
+        coeffs[j::op][:dec] = taps[2*j*dec:][:dec][::-1]
+        if not odd_operations or j != op - 1:
+            coeffs[num_coeffs//2+j::op][:dec] = (
+                    taps[(2*j+1)*dec:][:dec][::-1])
+
+    return coeffs
+
 # Generator ----------------------------------------------------------------------------------------
 
 def fir_generator(output_path,
