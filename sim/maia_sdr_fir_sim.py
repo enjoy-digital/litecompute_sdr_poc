@@ -32,9 +32,9 @@ from liteeth.phy.model import LiteEthPHYModel
 
 sys.path.append("..")
 
-from utils import PacketStreamer, PacketChecker, clamp_nbits
+from utils import PacketStreamer, PacketChecker, clamp_nbits, CoefficientsStreamer
 
-from gateware.maia_sdr_fir import MaiaSDRFIR
+from gateware.maia_sdr_fir import MaiaSDRFIR, compute_coefficients
 
 # Utils --------------------------------------------------------------------------------------------
 def two_complement_encode(value, bits):
@@ -154,12 +154,13 @@ class Platform(SimPlatform):
 class SimSoC(SoCCore):
     def __init__(self, sys_clk_freq=int(200e6), data_in_width=16, data_out_width=16,
         stream_file           = None,
-        coeff_len             = 32,
+        coeff_len             = 34,
         len_log2              = 8,
         signal_freq           = 10e6,
         with_etherbone        = False,
         etherbone_mac_address = 0x10e2d5000001,
-        etherbone_ip_address  = "192.168.1.51",
+        etherbone_ip_address  = "192.168.1.50",
+        ethernet_remote_ip    = "192.168.1.100",
         ):
 
         # Platform ---------------------------------------------------------------------------------
@@ -173,9 +174,17 @@ class SimSoC(SoCCore):
         # SoC --------------------------------------------------------------------------------------
         SoCMini.__init__(self, platform, clk_freq=sys_clk_freq)
 
+        # Constants --------------------------------------------------------------------------------
+        operation = coeff_len // 2
+        operation = 15
+        coeff_len = (operation + 1) * 2
+
         # Signals ----------------------------------------------------------------------------------
         coeff_write_end = Signal()
 
+        # Coefficients Streamer --------------------------------------------------------------------
+        coeffs_data = compute_coefficients(operation, 1, False, 2**len_log2)
+        self.coeff_streamer = CoefficientsStreamer(18, len_log2, coeffs_data)
         # MAIA SDR FIR -----------------------------------------------------------------------------
         self.fir = fir = MaiaSDRFIR(platform,
             data_in_width  = data_in_width,
@@ -194,7 +203,7 @@ class SimSoC(SoCCore):
             fir.decimation.eq(1),
 
             # Operations minus one.
-            fir.operations_minus_one.eq((coeff_len // 2) - 1),
+            fir.operations_minus_one.eq(operation - 1),
 
             # ODD Operations.
             fir.odd_operations.eq(0),
@@ -204,29 +213,24 @@ class SimSoC(SoCCore):
         # ------------------
         self.fsm = fsm = FSM(reset_state="IDLE")
         fsm.act("IDLE",
-            NextValue(fir.coeff_waddr, 0),
             NextState("TRANSMIT")
         )
         fsm.act("TRANSMIT",
-            fir.coeff_wren.eq(1),
-            If((fir.coeff_waddr[:-1] < coeff_len // 2),
-                fir.coeff_wdata.eq(1),
-            ).Else(
-                fir.coeff_wdata.eq(0),
-            ),
-            NextState("WAIT"),
-        )
-        fsm.act("WAIT",
-            NextValue(fir.coeff_waddr, fir.coeff_waddr + 1),
-            If(fir.coeff_waddr == (2**len_log2) - 1,
-               NextState("END"),
-            ).Else(
-                NextState("TRANSMIT"),
+            self.coeff_streamer.source.ready.eq(1),
+            If(self.coeff_streamer.source.last,
+                NextState("END"),
             ),
         )
         fsm.act("END",
             coeff_write_end.eq(1),
+            self.coeff_streamer.source.ready.eq(0),
         )
+
+        self.comb += [
+            fir.coeff_wdata.eq(self.coeff_streamer.source.data),
+            fir.coeff_waddr.eq(self.coeff_streamer.source.addr),
+            fir.coeff_wren.eq( self.coeff_streamer.source.valid),
+        ]
 
         # Streamer ---------------------------------------------------------------------------------
         if stream_file is None:
@@ -247,7 +251,7 @@ class SimSoC(SoCCore):
         re_part      = [(0xffff & streamer_data[i]) for i in range(0, len(streamer_data), 1)]
         im_part      = [(0xffff & (streamer_data[i] >> data_out_width)) for i in range(0, len(streamer_data), 1)]
         checker_data = []
-        re_part, im_part = model(0, data_out_width, [1] * (coeff_len + 2), 1, re_part, im_part)
+        re_part, im_part = model(0, data_out_width, [1] * (coeff_len), 1, re_part, im_part)
         with open("oracle.txt", "w") as fd:
             for i in range(len(re_part)):
                 re = two_complement_encode(int(re_part[i]), data_out_width)
@@ -268,12 +272,17 @@ class SimSoC(SoCCore):
         # Etherbone --------------------------------------------------------------------------------
         if with_etherbone:
             self.ethphy = LiteEthPHYModel(self.platform.request("eth", 0))
+            self.add_constant("HW_PREAMBLE_CRC")
             self.add_etherbone(
                 phy         = self.ethphy,
                 ip_address  = etherbone_ip_address,
                 mac_address = etherbone_mac_address,
                 data_width  = 8,
-                with_ethmac = False,
+                # Ethernet Parameters.
+                with_ethmac      = False,
+                ethmac_address   = 0x10e2d5000000,
+                ethmac_local_ip  = etherbone_ip_address,
+                ethmac_remote_ip = ethernet_remote_ip,
             )
 
             self._coeff_ctrl = CSRStorage(description="Control Registers.", fields=[
@@ -283,6 +292,7 @@ class SimSoC(SoCCore):
 
         # Sim Debug --------------------------------------------------------------------------------
         self.sync += If(fir.source.valid, Display("%d %d", fir.source.re, fir.source.im))
+        self.sync += If(fir.coeff_wren, Display("%x %x", fir.coeff_waddr, fir.coeff_wdata))
 
         # Sim Finish -------------------------------------------------------------------------------
         if not with_etherbone:
@@ -303,6 +313,7 @@ def main():
     # Ethernet /Etherbone.
     parser.add_argument("--with-etherbone", action="store_true",     help="Enable Etherbone support.")
     parser.add_argument("--remote-ip",      default="192.168.1.100", help="Remote IP address of TFTP server.")
+    parser.add_argument("--local-ip",       default="192.168.1.50",  help="Remote IP address of TFTP server.")
 
     # FIR Configuration.
     parser.add_argument("--signal-freq",    default=10e6, type=float, help="Input signal frequency.")
@@ -316,8 +327,10 @@ def main():
     soc = SimSoC(stream_file=args.file,
         signal_freq          = args.signal_freq,
         with_etherbone       = args.with_etherbone,
-        etherbone_ip_address = args.remote_ip,
+        etherbone_ip_address = args.local_ip,
+        ethernet_remote_ip   = args.remote_ip,
     )
+
     builder = Builder(soc, output_dir="build/sim", csr_csv="csr.csv")
     builder.build(sim_config=sim_config,
         trace=args.trace, trace_fst=True)
