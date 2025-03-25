@@ -11,6 +11,37 @@ def clamp_nbits(x, nbits):
     offset = 2**(nbits - 1)
     return ((x + offset) % 2**nbits) - offset
 
+# Coefficients Streamer ----------------------------------------------------------------------------
+
+class CoefficientsStreamer(LiteXModule):
+    def __init__(self, data_width, addr_width, datas):
+        self.source = source = stream.Endpoint([("data", data_width), ("addr", addr_width)])
+
+        # # #
+
+        count = Signal(addr_width)
+
+        mem  = Memory(data_width, len(datas), init=datas)
+        port = mem.get_port(async_read=True)
+        self.specials += mem, port
+
+        self.comb += [
+            port.adr.eq(count),
+            source.valid.eq(source.ready),
+            source.last.eq( count == (len(datas) - 1)),
+            source.data.eq(port.dat_r),
+            source.addr.eq(count),
+        ]
+        self.sync += [
+            If(source.valid & source.ready,
+                If(source.last,
+                    count.eq(0),
+                ).Else(
+                    count.eq(count + 1)
+                )
+            )
+        ]
+
 # Packer Streamer ----------------------------------------------------------------------------------
 
 class PacketStreamer(LiteXModule):
