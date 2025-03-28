@@ -6,11 +6,6 @@ from litex.gen.genlib.misc import timeline, WaitTimer
 
 from litex.soc.interconnect import stream
 
-# Utils --------------------------------------------------------------------------------------------
-def clamp_nbits(x, nbits):
-    offset = 2**(nbits - 1)
-    return ((x + offset) % 2**nbits) - offset
-
 # Coefficients Streamer ----------------------------------------------------------------------------
 
 class CoefficientsStreamer(LiteXModule):
@@ -85,7 +80,7 @@ class PacketStreamer(LiteXModule):
 # Packet Checker -----------------------------------------------------------------------------------
 
 class PacketChecker(Module):
-    def __init__(self, data_width, datas, with_framing_error=True):
+    def __init__(self, data_width, datas, with_framing_error=True, skip=0):
         self.data_width    = data_width
         self.sink          = sink = stream.Endpoint([("data", data_width)])
         self.data_error    = Signal()
@@ -102,12 +97,15 @@ class PacketChecker(Module):
         port = mem.get_port(async_read=True)
         self.specials += mem, port
 
+        skip_samples = Signal()
+        self.comb += skip_samples.eq(~(count >= skip-1))
+
         # Data/Framing Check.
         self.comb += [
             port.adr.eq(count),
             sink.ready.eq(1),
             self.reference.eq(port.dat_r),
-            If(sink.valid & sink.ready,
+            If(sink.valid & sink.ready & count >= skip-1,
                 # Data Check.
                 If(sink.data != self.reference,
                     self.data_error.eq(1)
@@ -150,11 +148,11 @@ class PacketChecker(Module):
                     self.sink.data,
                     self.reference
                 )
-            ).Else(
-                Display(banner + data_ok_msg,
-                    self.sink.data,
-                    self.reference
-                )
+            #).Else(
+            #    Display(banner + data_ok_msg,
+            #        self.sink.data,
+            #        self.reference
+            #    )
             ),
             If(self.framing_error,
                 Display(banner + framing_error_msg)
