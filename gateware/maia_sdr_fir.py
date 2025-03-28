@@ -16,6 +16,10 @@ from litex.soc.interconnect.csr import *
 
 from .clk_nx_common_edge import ClkNxCommonEdge
 
+# Utils --------------------------------------------------------------------------------------------
+def clamp_nbits(x, nbits):
+    offset = 2**(nbits - 1)
+    return ((x + offset) % 2**nbits) - offset
 
 # Utils --------------------------------------------------------------------------------------------
 
@@ -28,8 +32,11 @@ def compute_coefficients(operations=16, decimation=1, odd_operations=False, num_
     if len(taps) == 0:
         num_taps = decimation * num_mult
         taps     = np.arange(1, num_taps // 2 + 1)
-        taps     = np.ones(num_taps // 2 + 1)
+        print(taps.size)
+        taps     = np.ones(num_taps // 2)
+        print(taps.size)
         taps     = np.concatenate((taps, taps[::-1]))
+    print(len(taps))
 
     coeffs = np.zeros(num_coeffs, 'int')
     op     = operations
@@ -40,8 +47,44 @@ def compute_coefficients(operations=16, decimation=1, odd_operations=False, num_
         if not odd_operations or j != op - 1:
             coeffs[num_coeffs//2+j::op][:dec] = (
                     taps[(2*j+1)*dec:][:dec][::-1])
+    print(num_taps, end=' ')
+    print(taps.size)
+    taps = [int(t) for t in taps]
 
-    return coeffs
+    return (len(taps), taps, coeffs)
+
+# FIR Model ----------------------------------------------------------------------------------------
+
+def model(macc_trunc, ow, taps, decimation, re_in, im_in):
+    assert len(taps) % decimation == 0
+    taps    = np.array(taps).reshape(-1, decimation)
+    history = np.zeros(taps.size - 1, 'int')
+    re_out  = np.zeros(len(re_in) // decimation, 'int')
+    im_out  = np.zeros(len(re_in) // decimation, 'int')
+    re_in   = np.concatenate((history, re_in))
+    im_in   = np.concatenate((history, im_in))
+    for j in range(re_out.size):
+        # initial values for rounding
+        acc_init           = (2**(macc_trunc - 1) if macc_trunc >= 1 else 0)
+        re0, im0, re1, im1 = [acc_init] * 4
+        for k in range(taps.shape[0]):
+            wr = re_in[(j + taps.shape[0] - k - 1) * decimation:][:decimation]
+            wi = im_in[(j + taps.shape[0] - k - 1) * decimation:][:decimation]
+            sr = np.sum(wr[::-1] * taps[k])
+            si = np.sum(wi[::-1] * taps[k])
+            if k % 2 == 0:
+                re0 += sr
+                im0 += si
+            else:
+                re1 += sr
+                im1 += si
+        re0       = clamp_nbits(re0 >> macc_trunc, ow)
+        im0       = clamp_nbits(im0 >> macc_trunc, ow)
+        re1       = clamp_nbits(re1 >> macc_trunc, ow)
+        im1       = clamp_nbits(im1 >> macc_trunc, ow)
+        re_out[j] = clamp_nbits(re0 + re1, ow)
+        im_out[j] = clamp_nbits(im0 + im1, ow)
+    return re_out, im_out
 
 # Generator ----------------------------------------------------------------------------------------
 
