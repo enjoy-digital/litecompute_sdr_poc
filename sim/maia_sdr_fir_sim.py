@@ -234,7 +234,8 @@ class SimSoC(SoCCore):
         else:
             streamer_data = read_sample_data_from_file(stream_file, data_in_width)
 
-        self.streamer = streamer = PacketStreamer(data_in_width * 2, streamer_data, 0)
+        # The first sample must be dropped to match model.
+        self.streamer = streamer = PacketStreamer(data_in_width * 2, streamer_data[1:], 0)
         self.comb += [
             streamer.source.connect(self.fir.sink, omit=["ready", "valid", "data"]),
             streamer.source.ready.eq(fir.sink.ready & coeff_write_end),
@@ -244,8 +245,8 @@ class SimSoC(SoCCore):
         ]
 
         # Checker ----------------------------------------------------------------------------------
-        re_part      = re_in
-        im_part      = im_in
+        re_part      = [int(r) for r in re_in]
+        im_part      = [int(i) for i in im_in]
         with open("t.txt", "w") as fd:
             for i in range(len(streamer_data)):
                 fd.write(f"{re_part[i]} {im_part[i]}\n")
@@ -294,7 +295,7 @@ class SimSoC(SoCCore):
             ])
 
         # Sim Debug --------------------------------------------------------------------------------
-        self.sync += If(fir.source.valid, Display("0x%04x 0x%04x", fir.source.re, fir.source.im))
+        self.sync += If(fir.source.valid, Display("%04x %04x", fir.source.re, fir.source.im))
         #self.sync += If(fir.coeff_wren, Display("%x %x", fir.coeff_waddr, fir.coeff_wdata))
 
         # Sim Finish -------------------------------------------------------------------------------
