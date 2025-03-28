@@ -32,11 +32,8 @@ def compute_coefficients(operations=16, decimation=1, odd_operations=False, num_
     if len(taps) == 0:
         num_taps = decimation * num_mult
         taps     = np.arange(1, num_taps // 2 + 1)
-        print(taps.size)
-        taps     = np.ones(num_taps // 2)
-        print(taps.size)
+        #taps     = np.ones(num_taps // 2)
         taps     = np.concatenate((taps, taps[::-1]))
-    print(len(taps))
 
     coeffs = np.zeros(num_coeffs, 'int')
     op     = operations
@@ -47,8 +44,6 @@ def compute_coefficients(operations=16, decimation=1, odd_operations=False, num_
         if not odd_operations or j != op - 1:
             coeffs[num_coeffs//2+j::op][:dec] = (
                     taps[(2*j+1)*dec:][:dec][::-1])
-    print(num_taps, end=' ')
-    print(taps.size)
     taps = [int(t) for t in taps]
 
     return (len(taps), taps, coeffs)
@@ -162,6 +157,7 @@ class MaiaSDRFIR(LiteXModule):
 
         # Decimation -------------------------------------------------------------------------------
         self.decimation           = Signal(decim_width)
+
         # FIR Coefficient --------------------------------------------------------------------------
         self.coeff_wren           = Signal()
         self.coeff_waddr          = Signal(len_log2)
