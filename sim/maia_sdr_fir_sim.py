@@ -32,9 +32,9 @@ from liteeth.phy.model import LiteEthPHYModel
 
 sys.path.append("..")
 
-from utils import PacketStreamer, PacketChecker, clamp_nbits, CoefficientsStreamer
+from utils import PacketStreamer, PacketChecker, CoefficientsStreamer
 
-from gateware.maia_sdr_fir import MaiaSDRFIR, compute_coefficients
+from gateware.maia_sdr_fir import MaiaSDRFIR, compute_coefficients, model, clamp_nbits
 
 # Utils --------------------------------------------------------------------------------------------
 def two_complement_encode(value, bits):
@@ -82,45 +82,9 @@ def read_sample_data_from_file(sample_file, data_width):
             if not chunk:
                 break
             im = int.from_bytes(chunk, byteorder='little', signed=False)  # Convert to integer
-            #samples.append((im << data_width) | (re))
-            samples.append((1 << data_width) | 1)
+            samples.append((im << data_width) | (re))
+            #samples.append((1 << data_width) | 1)
     return samples
-
-def model(macc_trunc, ow, taps, decimation, re_in, im_in):
-    assert len(taps) % decimation == 0
-    taps    = np.array(taps).reshape(-1, decimation)
-    history = np.zeros(taps.size - 1, 'int')
-    re_out  = np.zeros(len(re_in) // decimation, 'int')
-    im_out  = np.zeros(len(re_in) // decimation, 'int')
-    re_in   = np.concatenate((history, re_in))
-    im_in   = np.concatenate((history, im_in))
-    for j in range(re_out.size):
-        # initial values for rounding
-        acc_init = (2**(macc_trunc - 1)
-                    if macc_trunc >= 1
-                    else 0)
-        re0, im0, re1, im1 = [acc_init] * 4
-        for k in range(taps.shape[0]):
-            wr = re_in[(j + taps.shape[0] - k - 1)
-                       * decimation:][:decimation]
-            wi = im_in[(j + taps.shape[0] - k - 1)
-                       * decimation:][:decimation]
-            sr = np.sum(wr[::-1] * taps[k])
-            si = np.sum(wi[::-1] * taps[k])
-            if k % 2 == 0:
-                re0 += sr
-                im0 += si
-            else:
-                re1 += sr
-                im1 += si
-        re0       = clamp_nbits(re0 >> macc_trunc, ow)
-        im0       = clamp_nbits(im0 >> macc_trunc, ow)
-        re1       = clamp_nbits(re1 >> macc_trunc, ow)
-        im1       = clamp_nbits(im1 >> macc_trunc, ow)
-        re_out[j] = clamp_nbits(re0 + re1, ow)
-        im_out[j] = clamp_nbits(im0 + im1, ow)
-    return re_out, im_out
-
 
 # IOs ----------------------------------------------------------------------------------------------
 
@@ -176,15 +140,22 @@ class SimSoC(SoCCore):
 
         # Constants --------------------------------------------------------------------------------
         operation = coeff_len // 2
-        operation = 15
-        coeff_len = (operation + 1) * 2
 
         # Signals ----------------------------------------------------------------------------------
         coeff_write_end = Signal()
 
         # Coefficients Streamer --------------------------------------------------------------------
-        coeffs_data = compute_coefficients(operation, 1, False, 2**len_log2)
+        (taps_len, taps_data, coeffs_data) = compute_coefficients(operation, 1, False, 2**len_log2)
+        with open("coeff_lut.txt", "w") as fd:
+            for i, c in enumerate(coeffs_data):
+                fd.write(f"{i} {i:02x} {c}\n")
+        with open("taps_lut.txt", "w") as fd:
+            for i, c in enumerate(taps_data):
+                fd.write(f"{i} {i:02x} {c}\n")
+
+        assert taps_len == coeff_len
         self.coeff_streamer = CoefficientsStreamer(18, len_log2, coeffs_data)
+
         # MAIA SDR FIR -----------------------------------------------------------------------------
         self.fir = fir = MaiaSDRFIR(platform,
             data_in_width  = data_in_width,
@@ -248,24 +219,24 @@ class SimSoC(SoCCore):
         ]
 
         # Checker ----------------------------------------------------------------------------------
-        re_part      = [(0xffff & streamer_data[i]) for i in range(0, len(streamer_data), 1)]
-        im_part      = [(0xffff & (streamer_data[i] >> data_out_width)) for i in range(0, len(streamer_data), 1)]
+        re_part      = [(((2**data_in_width)-1) & (streamer_data[i] >>             0)) for i in range(0, len(streamer_data), 1)]
+        im_part      = [(((2**data_in_width)-1) & (streamer_data[i] >> data_in_width)) for i in range(0, len(streamer_data), 1)]
         checker_data = []
-        re_part, im_part = model(0, data_out_width, [1] * (coeff_len), 1, re_part, im_part)
+        re_part, im_part = model(0, data_in_width, taps_data, 1, re_part, im_part)
         with open("oracle.txt", "w") as fd:
             for i in range(len(re_part)):
                 re = two_complement_encode(int(re_part[i]), data_out_width)
                 im = two_complement_encode(int(im_part[i]), data_out_width)
-                checker_data.append(re)
-                checker_data.append(im)
+                checker_data.append((im << data_out_width) | (re))
                 fd.write(f"{re_part[i]} {im_part[i]}\n");
 
-        self.checker = checker = PacketChecker(data_out_width, checker_data)
-        #checker.add_debug("FIR")
+        self.checker = checker = PacketChecker(2 * data_out_width, checker_data, skip=len(taps_data))
+        checker.add_debug("FIR")
 
         self.comb += [
-            fir.source.connect(checker.sink, omit=["ready", "re", "im"]),
+            fir.source.connect(checker.sink, omit=["ready", "valid", "re", "im"]),
             fir.source.ready.eq(checker.sink.ready & coeff_write_end),
+            checker.sink.valid.eq(fir.source.valid & coeff_write_end),
             checker.sink.data.eq(Cat(fir.source.re, fir.source.im)),
         ]
 
@@ -288,11 +259,10 @@ class SimSoC(SoCCore):
             self._coeff_ctrl = CSRStorage(description="Control Registers.", fields=[
                 CSRField("coeff_write_end", size=1, offset=0, description="End Of Coefficient load.")
             ])
-            #self.comb += coeff_write_end.eq(self._coeff_ctrl.fields.coeff_write_end)
 
         # Sim Debug --------------------------------------------------------------------------------
         self.sync += If(fir.source.valid, Display("%d %d", fir.source.re, fir.source.im))
-        self.sync += If(fir.coeff_wren, Display("%x %x", fir.coeff_waddr, fir.coeff_wdata))
+        #self.sync += If(fir.coeff_wren, Display("%x %x", fir.coeff_waddr, fir.coeff_wdata))
 
         # Sim Finish -------------------------------------------------------------------------------
         if not with_etherbone:
