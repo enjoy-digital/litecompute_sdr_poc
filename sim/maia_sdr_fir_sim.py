@@ -42,7 +42,12 @@ def two_complement_encode(value, bits):
         value = value - (1 << bits)
     return value % (2**bits)
 
-def generate_sample_data(frequency, sample_rate, repetitions, data_width):
+def two_complement_decode(value, bits):
+    if value >= (1 << (bits - 1)):
+        value -= (1 << (bits))
+    return value
+
+def generate_sample_data(frequency, sample_rate, repetitions, data_width, num_taps, decimation):
     if sample_rate < 2 * frequency:
         print("Warning: Sample rate is less than twice the frequency, which may lead to aliasing.")
 
@@ -57,14 +62,27 @@ def generate_sample_data(frequency, sample_rate, repetitions, data_width):
     imag        = np.int16(im_wave * gain)
     stream_data = []
 
+    re_in = np.zeros(2048, 'int')
+    for j in range(decimation):
+        re_in[4 * num_taps * j + j + 10] = 1
+    im_in = np.random.randint(-2**15, 2**15, size=re_in.size)
+    im_in = np.arange(1, re_in.size + 1)
+    # set first input samples to 0 to avoid results that do not match
+    # the model due to initial samples being written in the wrong memory
+    # locations
+    keep_out = 7
+    im_in[:keep_out] = 0
+
     with open("lut.txt", "w") as fd:
-        for i in range(len(real)):
-            re = two_complement_encode(int(real[i]), data_width)
-            im = two_complement_encode(int(imag[i]), data_width)
-            fd.write(f"{real[i]} {imag[i]} {re_wave[i]} {im_wave[i]}\n")
+        fd.write(f"{decimation} {num_taps}\n")
+        for i in range(len(re_in)):
+            re = two_complement_encode(int(re_in[i]), data_width)
+            im = two_complement_encode(int(im_in[i]), data_width)
+            #fd.write(f"{re} {im} {int(re_in[i])} {int(im_in[i])}\n")
+            fd.write(f"{int(re_in[i])} {int(im_in[i])}\n")
             stream_data.append((im << data_width) | (re))
 
-    return stream_data
+    return (stream_data, re_in, im_in)
 
 def read_sample_data_from_file(sample_file, data_width):
     samples = []
@@ -77,13 +95,14 @@ def read_sample_data_from_file(sample_file, data_width):
             chunk = f.read(2)  # Read 16 bits (2 bytes)
             if not chunk:
                 break
-            re = int.from_bytes(chunk, byteorder='little', signed=False)  # Convert to integer
+            re = int.from_bytes(chunk, byteorder='little', signed=True)  # Convert to integer
             chunk = f.read(2)  # Read 16 bits (2 bytes)
             if not chunk:
                 break
-            im = int.from_bytes(chunk, byteorder='little', signed=False)  # Convert to integer
+            im = int.from_bytes(chunk, byteorder='little', signed=True)  # Convert to integer
             samples.append((im << data_width) | (re))
-            #samples.append((1 << data_width) | 1)
+            #const = 2
+            #samples.append((const << data_width) | (const))
     return samples
 
 # IOs ----------------------------------------------------------------------------------------------
@@ -118,8 +137,10 @@ class Platform(SimPlatform):
 class SimSoC(SoCCore):
     def __init__(self, sys_clk_freq=int(200e6), data_in_width=16, data_out_width=16,
         stream_file           = None,
-        coeff_len             = 34,
+        coeff_len             = 6,
+        macc_trunc            = 0,
         len_log2              = 8,
+        decimation            = 5,
         signal_freq           = 10e6,
         with_etherbone        = False,
         etherbone_mac_address = 0x10e2d5000001,
@@ -140,18 +161,19 @@ class SimSoC(SoCCore):
 
         # Constants --------------------------------------------------------------------------------
         operation = coeff_len // 2
+        coeff_len = operation * 2 * decimation
 
         # Signals ----------------------------------------------------------------------------------
         coeff_write_end = Signal()
 
         # Coefficients Streamer --------------------------------------------------------------------
-        (taps_len, taps_data, coeffs_data) = compute_coefficients(operation, 1, False, 2**len_log2)
+        (taps_len, taps_data, coeffs_data) = compute_coefficients(operation, decimation, False, 2**len_log2)
         with open("coeff_lut.txt", "w") as fd:
             for i, c in enumerate(coeffs_data):
-                fd.write(f"{i} {i:02x} {c}\n")
+                fd.write(f"{c}\n")
         with open("taps_lut.txt", "w") as fd:
             for i, c in enumerate(taps_data):
-                fd.write(f"{i} {i:02x} {c}\n")
+                fd.write(f"{c}\n")
 
         assert taps_len == coeff_len
         self.coeff_streamer = CoefficientsStreamer(18, len_log2, coeffs_data)
@@ -163,7 +185,7 @@ class SimSoC(SoCCore):
             coeff_width    = 18,
             decim_width    = 7,
             oper_width     = 7,
-            macc_trunc     = 0, #19,
+            macc_trunc     = macc_trunc,
             len_log2       = len_log2,
             clk_domain     = "sys",
             with_csr       = False,
@@ -171,7 +193,7 @@ class SimSoC(SoCCore):
 
         self.comb += [
             # Decimations.
-            fir.decimation.eq(1),
+            fir.decimation.eq(decimation),
 
             # Operations minus one.
             fir.operations_minus_one.eq(operation - 1),
@@ -205,7 +227,10 @@ class SimSoC(SoCCore):
 
         # Streamer ---------------------------------------------------------------------------------
         if stream_file is None:
-            streamer_data = generate_sample_data(signal_freq, sys_clk_freq, 10000, data_in_width)
+            streamer_data, re_in, im_in = generate_sample_data(signal_freq, sys_clk_freq, 10000, data_in_width,
+                num_taps   = len(taps_data),
+                decimation = decimation,
+            )
         else:
             streamer_data = read_sample_data_from_file(stream_file, data_in_width)
 
@@ -213,22 +238,30 @@ class SimSoC(SoCCore):
         self.comb += [
             streamer.source.connect(self.fir.sink, omit=["ready", "valid", "data"]),
             streamer.source.ready.eq(fir.sink.ready & coeff_write_end),
-            fir.sink.valid.eq(streamer.source.valid & coeff_write_end),
-            fir.sink.re.eq(streamer.source.data[:data_out_width]),
-            fir.sink.im.eq(streamer.source.data[data_out_width:]),
+            fir.sink.valid.eq(streamer.source.valid & streamer.source.ready & coeff_write_end),
+            fir.sink.re.eq(streamer.source.data[:data_in_width]),
+            fir.sink.im.eq(streamer.source.data[data_in_width:]),
         ]
 
         # Checker ----------------------------------------------------------------------------------
-        re_part      = [(((2**data_in_width)-1) & (streamer_data[i] >>             0)) for i in range(0, len(streamer_data), 1)]
-        im_part      = [(((2**data_in_width)-1) & (streamer_data[i] >> data_in_width)) for i in range(0, len(streamer_data), 1)]
+        re_part      = re_in
+        im_part      = im_in
+        with open("t.txt", "w") as fd:
+            for i in range(len(streamer_data)):
+                fd.write(f"{re_part[i]} {im_part[i]}\n")
         checker_data = []
-        re_part, im_part = model(0, data_in_width, taps_data, 1, re_part, im_part)
+
+        # Create re/im based on model.
+        re_part, im_part = model(macc_trunc, data_out_width, taps_data, decimation, re_part, im_part)
+
         with open("oracle.txt", "w") as fd:
             for i in range(len(re_part)):
-                re = two_complement_encode(int(re_part[i]), data_out_width)
-                im = two_complement_encode(int(im_part[i]), data_out_width)
+                r  = re_part[i]
+                i  = im_part[i]
+                re = two_complement_encode(int(r), data_out_width)
+                im = two_complement_encode(int(i), data_out_width)
                 checker_data.append((im << data_out_width) | (re))
-                fd.write(f"{re_part[i]} {im_part[i]}\n");
+                fd.write(f"{r} {i}\n");
 
         self.checker = checker = PacketChecker(2 * data_out_width, checker_data, skip=len(taps_data))
         checker.add_debug("FIR")
@@ -261,7 +294,7 @@ class SimSoC(SoCCore):
             ])
 
         # Sim Debug --------------------------------------------------------------------------------
-        self.sync += If(fir.source.valid, Display("%d %d", fir.source.re, fir.source.im))
+        self.sync += If(fir.source.valid, Display("0x%04x 0x%04x", fir.source.re, fir.source.im))
         #self.sync += If(fir.coeff_wren, Display("%x %x", fir.coeff_waddr, fir.coeff_wdata))
 
         # Sim Finish -------------------------------------------------------------------------------
