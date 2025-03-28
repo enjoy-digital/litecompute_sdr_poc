@@ -34,6 +34,7 @@ from liteeth.phy.a7_gtp import QPLLSettings, QPLL
 from litescope import LiteScopeAnalyzer
 
 from gateware.maia_sdr_fft import MaiaSDRFFT
+from gateware.maia_sdr_fir import MaiaSDRFIR
 
 # CRG ----------------------------------------------------------------------------------------------
 
@@ -117,6 +118,19 @@ class BaseSoC(SoCMini):
             )
             self.pcie_phy.use_external_qpll(qpll_channel=qpll.channels[0])
 
+        # MAIA SDR FIR -----------------------------------------------------------------------------
+        self.fir = fir = MaiaSDRFIR(platform,
+            data_in_width  = 16,
+            data_out_width = 16,
+            coeff_width    = 18,
+            decim_width    = 7,
+            oper_width     = 7,
+            macc_trunc     = 0,
+            len_log2       = 8,
+            clk_domain     = "sys",
+            with_csr       = True,
+        )
+
         # MAIA SDR FFT -----------------------------------------------------------------------------
         self.fft = MaiaSDRFFT(platform,
             data_width  = 16,
@@ -127,27 +141,63 @@ class BaseSoC(SoCMini):
             clk_domain  = "sys",
         )
 
+        # CSR/Configuration ------------------------------------------------------------------------
+
+        self._configuration = CSRStorage(description="Stream Configuration.", fields=[
+            CSRField("fir", size=1, offset=0, values=[
+                ("``0b0``", "Disable FIR Filter."),
+                ("``0b1``", "Enable  FIR Filter."),
+            ], reset = 0b1),
+            CSRField("fft", size=1, offset=1, values=[
+                ("``0b0``", "Disable FFT."),
+                ("``0b1``", "Enable  FFT."),
+            ], reset = 0b1),
+        ])
+
         # TX/RX Datapath ---------------------------------------------------------------------------
 
-        # PCIe <-> MaiaHDLFFT.
-        # --------------------
+        ep0 = stream.Endpoint([("re", 16), ("im", 16)])
+        ep1 = stream.Endpoint([("re", 16), ("im", 16)])
+        ep2 = stream.Endpoint([("re", 16), ("im", 16)])
 
-        self.tx_conv = ResetInserter()(stream.Converter(64, 32))
+        # PCIe -> MaiaHDLFIR -> MaiaHDLFFT -> PCie.
+        # -----------------------------------------
+
         # FIXME: FFT output size is not always == input size
+        self.tx_conv = ResetInserter()(stream.Converter(64, 32))
         self.rx_conv = ResetInserter()(stream.Converter(32, 64))
 
         self.comb += [
             # PCIe DMA0 Source -> Converter.
             self.pcie_dma0.source.connect(self.tx_conv.sink),
 
-            # Converter -> FFT
-            self.tx_conv.source.connect(self.fft.sink, omit=["data"]),
-            self.fft.sink.re.eq(self.tx_conv.source.data[:16]),
-            self.fft.sink.im.eq(self.tx_conv.source.data[16:]),
+            # Converter -> EP0.
+            self.tx_conv.source.connect(ep0, omit=["data"]),
+            ep0.re.eq(self.tx_conv.source.data[ 0:16]),
+            ep0.im.eq(self.tx_conv.source.data[16:32]),
 
-            # FFt -> Converter.
-            self.fft.source.connect(self.rx_conv.sink, omit=["re", "im"]),
-            self.rx_conv.sink.data.eq(Cat(self.fft.source.re, self.fft.source.im)),
+            # FIR.
+            If(self._configuration.fields.fir,
+                # EP0 -> FIR -> EP1.
+                ep0.connect(self.fir.sink),
+                self.fir.source.connect(ep1),
+            ).Else( # EP0 -> EP1.
+                ep0.connect(ep1),
+            ),
+
+            # FFT.
+            If(self._configuration.fields.fft,
+                # EP1 -> FFT.
+                ep1.connect(self.fft.sink),
+                # FFT -> EP2.
+                self.fft.source.connect(ep2),
+            ).Else( # EP1 -> EP2.
+                ep1.connect(ep2),
+            ),
+
+            # EP2 -> Converter.
+            ep2.connect(self.rx_conv.sink, omit=["re", "im"]),
+            self.rx_conv.sink.data.eq(Cat(ep2.re, ep2.im)),
 
             # Converter -> DMA0 Sink.
             self.rx_conv.source.connect(self.pcie_dma0.sink, omit=["first", "last"]),
@@ -199,7 +249,7 @@ def main():
 
     # FFT Configuration.
     parser.add_argument("--with-fft-window", action="store_true",      help="Enable FFT Windowing.")
-    parser.add_argument("--fft-radix",       default=2,    type=int,   help="Radix 2/4.")
+    parser.add_argument("--fft-radix",       default="2",              help="Radix 2/4.")
     parser.add_argument("--fft-order-log2",  default=5,    type=int,   help="Log2 of the FFT order.")
 
     # Litescope Analyzer Probes.
