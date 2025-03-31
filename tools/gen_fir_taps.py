@@ -25,6 +25,7 @@ def main():
     parser.add_argument("--fc",         default=100,   type=float, help="Cutoff Frequency (Hz).")
     parser.add_argument("--length",     default=100,   type=int,   help="Filter length.")
     parser.add_argument("--coeff-size", default=16,    type=int,   help="Coefficients Size.")
+    parser.add_argument("--bypass-gen"  action="store_true",       help="Use locally computed pseudo Coeff table.")
 
     # FIR parameters.
     parser.add_argument("--operations",     default=16,  type=int, help="Number of operations.")
@@ -36,27 +37,30 @@ def main():
 
     assert args.file is not None
 
-    # Normalized cutoff frequency
-    fc_normalized = args.fc / args.fs
+    h = []
+    if not args.bypass_gen:
+        # Normalized cutoff frequency
+        fc_normalized = args.fc / args.fs
 
-    # Time vector centered at 0
-    t = np.arange(-(args.length-1)//2, (args.length-1)//2 + 1)
+        # Time vector centered at 0
+        t = np.arange(-(args.length-1)//2, (args.length-1)//2 + 1)
 
-    # Sinc function for ideal low-pass filter
-    h = 2 * fc_normalized * np.sinc(2 * fc_normalized * t)
+        # Sinc function for ideal low-pass filter
+        h = 2 * fc_normalized * np.sinc(2 * fc_normalized * t)
 
-    # Apply a window (e.g., Hamming) to smooth the filter
-    window = np.hamming(args.length)
-    h = h * window
+        # Apply a window (e.g., Hamming) to smooth the filter
+        window = np.hamming(args.length)
+        h = h * window
 
-    # Normalize the filter to ensure unity gain at DC
-    h = h / np.max(h)
-    # Apply gain to fit coeff_size
-    gain = 2**(args.coeff_size -1) -1 # Maximum positive value
-    h = h * gain
+        # Normalize the filter to ensure unity gain at DC
+        h = h / np.max(h)
+        # Apply gain to fit coeff_size
+        gain = 2**(args.coeff_size -1) -1 # Maximum positive value
+        h = h * gain
 
-    (_, _, coeffs) = compute_coefficients(args.operations,
+    (len_taps, _, coeffs) = compute_coefficients(args.operations,
         args.decimation, args.odd_operations, args.num_coeffs, h)
+    print(len_taps)
 
     with open(args.file, "wb") as fd:
         # '<i' specifies little-endian signed 32-bit integer
