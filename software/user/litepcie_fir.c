@@ -68,8 +68,7 @@ static void fir_coefficients_write(const char *filename)
     coeffs_file_len /= 4;
 
     uint32_t coeffs[coeffs_file_len];
-    int ret;
-    ret = fread(coeffs, sizeof(uint32_t), coeffs_file_len, fd_coefficients);
+    int ret = fread(coeffs, sizeof(uint32_t), coeffs_file_len, fd_coefficients);
     if (ret != coeffs_file_len) {
         fprintf(stderr, "Error with Coefficients file: failed to read %d -> %ld\n", ret, coeffs_file_len);
         exit(1);
@@ -77,8 +76,8 @@ static void fir_coefficients_write(const char *filename)
 
     /* Write coefficients */
     for (i = 0; i < coeffs_file_len; i++) {
-        litepcie_writel(fd, CSR_FIR_DECIMATION_ADDR, i);
-        litepcie_writel(fd, CSR_FIR_COEFF_WADDR_ADDR, coeffs[i]);
+        litepcie_writel(fd, CSR_FIR_COEFF_WADDR_ADDR, i);
+        litepcie_writel(fd, CSR_FIR_COEFF_WDATA_ADDR, coeffs[i]);
     }
 
     fclose(fd_coefficients);
@@ -152,7 +151,7 @@ int main(int argc, char **argv)
 
     /* Parameters. */
     for (;;) {
-        c = getopt(argc, argv, "hc:d::o:O");
+        c = getopt(argc, argv, "hc:d:o:O:");
         if (c == -1)
             break;
         switch(c) {
@@ -187,7 +186,6 @@ int main(int argc, char **argv)
 
     /* Fir Coefficients configuration. */
     if (!strcmp(cmd, "coefficients")) {
-        printf("hello %d %d\n", optind, argc);
         const char *filename = NULL;
         if (optind + 1 > argc) {
             goto show_help;
