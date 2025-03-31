@@ -880,6 +880,67 @@ void fill_fft_invert_addr()
 }
 
 // -----------------------------------------------------------------------------
+// FFT Plot Panel Utilities (FIR management)
+// -----------------------------------------------------------------------------
+static void update_fir_configuration(const char *filename, uint32_t decimation,
+    uint32_t operations, bool is_odd)
+{
+    int fd = open(fft_device_name, O_RDWR);
+    /* write decimation. */
+    litepcie_writel(fd, CSR_FIR_DECIMATION_ADDR, decimation);
+    /* write operations (Minus one). */
+    litepcie_writel(fd, CSR_FIR_OPERATIONS_MINUS_ONE_ADDR, operations - 1);
+    /* write odd/event operations. */
+    litepcie_writel(fd, CSR_FIR_CFG_ADDR, (is_odd & 0x01) << CSR_FIR_CFG_ODD_OPERATIONS_OFFSET);
+    close(fd);
+}
+
+static void load_fir_coefficients(const char *filename, const char *coeffs_filename)
+{
+    long coeffs_file_len;
+    int fd = open(fft_device_name, O_RDWR);
+
+    FILE *fd_coefficients = fopen(filename, "r");
+    if (!fd_coefficients) {
+        fprintf(stderr, "Could not coefficients file %sn", filename);
+        return;
+    }
+
+    /* Retrieve file lenght. */
+    if (fseek(fd_coefficients, 0, SEEK_END) != 0) {
+        fprintf(stderr, "Error with Coefficients file\n");
+        return;
+    }
+
+    coeffs_file_len = ftell(fd_coefficients);
+    if (coeffs_file_len < 0) {
+        fprintf(stderr, "Error with Coefficients file: failed to get file length\n");
+        return;
+    }
+
+    /* Go back to the file begin */
+    fseek(fd_coefficients, 0, SEEK_SET);
+
+    /* convert size from Byte to word */
+    coeffs_file_len /= 4;
+
+    uint32_t coeffs[coeffs_file_len];
+    int ret = fread(coeffs, sizeof(uint32_t), coeffs_file_len, fd_coefficients);
+    if (ret != coeffs_file_len) {
+        fprintf(stderr, "Error with Coefficients file: failed to read %d -> %ld\n", ret, coeffs_file_len);
+        exit(1);
+    }
+
+    /* Write coefficients */
+    for (int i = 0; i < coeffs_file_len; i++) {
+        litepcie_writel(fd, CSR_FIR_COEFF_WADDR_ADDR, i);
+        litepcie_writel(fd, CSR_FIR_COEFF_WDATA_ADDR, coeffs[i]);
+    }
+
+    fclose(fd_coefficients);
+    close(fd);
+}
+// -----------------------------------------------------------------------------
 // FFT Plot Panel
 // -----------------------------------------------------------------------------
 static int g_fft_waterfall_framecount = 0;
@@ -922,6 +983,7 @@ void ShowM2SDRFFTPlotPanel()
     ImGui::InputText("##coeff", g_fir_coeff_lut, IM_ARRAYSIZE(g_fir_coeff_lut));
     ImGui::SameLine();
     if (ImGui::Button("load")) {
+        load_fir_coefficients(fft_device_name, g_fir_coeff_lut);
     }
     ImGui::Separator();
     ImGui::Text("Decimation:");
@@ -939,14 +1001,7 @@ void ShowM2SDRFFTPlotPanel()
     ImGui::Checkbox("##Odd", &g_fir_odd_operations);
     ImGui::Separator();
     if (ImGui::Button("update FIR Configuration")) {
-        int fd = open(fft_device_name, O_RDWR);
-        /* write decimation. */
-        litepcie_writel(fd, CSR_FIR_DECIMATION_ADDR, g_fir_decim);
-        /* write operations (Minus one). */
-        litepcie_writel(fd, CSR_FIR_OPERATIONS_MINUS_ONE_ADDR, g_fir_operations - 1);
-        /* write odd/event operations. */
-        litepcie_writel(fd, CSR_FIR_CFG_ADDR, (g_fir_odd_operations & 0x01) << CSR_FIR_CFG_ODD_OPERATIONS_OFFSET);
-        close(fd);
+        update_fir_configuration(fft_device_name, g_fir_decim, g_fir_operations, g_fir_odd_operations);
     }
 	uint16_t average = 1;
 
