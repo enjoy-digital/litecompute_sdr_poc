@@ -24,6 +24,8 @@
 #include <memory>
 #include <mutex>
 
+#include <fcntl.h> // open
+
 // KissFFT
 #include "kiss_fft.h"
 #include <math.h>    // for sqrtf
@@ -880,7 +882,12 @@ void fill_fft_invert_addr()
 // -----------------------------------------------------------------------------
 // FFT Plot Panel
 // -----------------------------------------------------------------------------
-static int  g_fft_waterfall_framecount = 0;
+static int g_fft_waterfall_framecount = 0;
+static char g_fir_coeff_lut[1024];
+static bool g_enable_fir = 1;
+static bool g_fir_odd_operations = false;
+static int g_fir_decim = 2;
+static int g_fir_operations = 16;
 
 void ShowM2SDRFFTPlotPanel()
 {
@@ -894,10 +901,58 @@ void ShowM2SDRFFTPlotPanel()
 
     ImGui::Checkbox("Enable Thread", &g_thread_fft_started);
 
+    // FIR configuration.
+    bool enable_fir = g_enable_fir;
+
+    ImGui::SeparatorText("FIR");
+    ImGui::Checkbox("Enable", &enable_fir);
+    if (enable_fir !=  g_enable_fir) {
+        g_enable_fir = enable_fir;
+        int fd = open(fft_device_name, O_RDWR);
+        uint32_t value = litepcie_readl(fd, CSR_MAIN_FFT_FIR_CFG_ADDR);
+        value &= ~(1 << CSR_MAIN_FFT_FIR_CFG_FIR_OFFSET);
+        if (g_enable_fir)
+            value |= (1 << CSR_MAIN_FFT_FIR_CFG_FIR_OFFSET);
+        litepcie_writel(fd, CSR_MAIN_FFT_FIR_CFG_ADDR, value);
+        close(fd);
+    }
+
     ImGui::Separator();
+    ImGui::Text("FIR coeffcients:");
+    ImGui::InputText("##coeff", g_fir_coeff_lut, IM_ARRAYSIZE(g_fir_coeff_lut));
+    ImGui::SameLine();
+    if (ImGui::Button("load")) {
+    }
+    ImGui::Separator();
+    ImGui::Text("Decimation:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(80.0f);
+    ImGui::InputInt("##Decimation:", &g_fir_decim, 1, 100, ImGuiInputTextFlags_ElideLeft);
+    ImGui::SameLine();
+    ImGui::Text("Operations:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(80.0f);
+    ImGui::InputInt("##Operations", &g_fir_operations);
+    ImGui::SameLine();
+    ImGui::Text("Odd operations:");
+    ImGui::SameLine();
+    ImGui::Checkbox("##Odd", &g_fir_odd_operations);
+    ImGui::Separator();
+    if (ImGui::Button("update FIR Configuration")) {
+        int fd = open(fft_device_name, O_RDWR);
+        /* write decimation. */
+        litepcie_writel(fd, CSR_FIR_DECIMATION_ADDR, g_fir_decim);
+        /* write operations (Minus one). */
+        litepcie_writel(fd, CSR_FIR_OPERATIONS_MINUS_ONE_ADDR, g_fir_operations - 1);
+        /* write odd/event operations. */
+        litepcie_writel(fd, CSR_FIR_CFG_ADDR, (g_fir_odd_operations & 0x01) << CSR_FIR_CFG_ODD_OPERATIONS_OFFSET);
+        close(fd);
+    }
+	uint16_t average = 1;
 
     // Waterfall options
-    ImGui::Checkbox("Waterfall", &g_fft_enable_waterfall);
+    ImGui::SeparatorText("Waterfall");
+    ImGui::Checkbox("enable", &g_fft_enable_waterfall);
     ImGui::SameLine();
     ImGui::InputInt("Wf Speed", &g_fft_waterfall_speed);
     if (g_fft_waterfall_speed < 1) g_fft_waterfall_speed = 1;
@@ -937,15 +992,20 @@ void ShowM2SDRFFTPlotPanel()
             std::lock_guard<std::mutex> lock(fft_buffer_mutex);
             if (!fft_q_buffer.empty() && !fft_i_buffer.empty() &&
                     (fft_q_buffer.size() >= n) && (fft_i_buffer.size() >= n)) {
-                for (int i = 0;  i < n; i++) {
-                    int addr = fft_invert_addr[i];
-                    std::complex<float> value(fft_i_buffer[i], fft_q_buffer[i]);
-                    g_fft_data[addr] = std::abs(value);
-                    if (g_fft_data[addr] > max_fft)
-                        max_fft = g_fft_data[addr];
+                // Compute number of samples to uses
+                uint32_t length = (fft_i_buffer.size() / n) * n;
+
+                for (int loop = 0; loop < average; loop++){
+                    for (int i = 0;  i < n; i++) {
+                        int idx = (loop * n) + i;
+                        int addr = fft_invert_addr[idx];
+                        std::complex<float> value(fft_i_buffer[idx], fft_q_buffer[idx]);
+                        g_fft_data[addr] = std::abs(value);
+                        if (g_fft_data[addr] > max_fft)
+                            max_fft = g_fft_data[addr];
+                    }
                 }
                 // Remove all unused samples
-                uint32_t length = (fft_i_buffer.size() / n) * n;
                 fft_i_buffer.erase(fft_i_buffer.begin(), fft_i_buffer.begin() + length);
                 fft_q_buffer.erase(fft_q_buffer.begin(), fft_q_buffer.begin() + length);
             }
