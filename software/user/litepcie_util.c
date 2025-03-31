@@ -108,6 +108,34 @@ void scratch_test(void)
     close(fd);
 }
 
+/* Stream Configuration */
+/*----------------------*/
+static void stream_configuration(int enable_fft, int enable_fir)
+{
+    int fd;
+    uint32_t new_value = 0;
+
+    printf("\e[1m[> Stream Configuration:\e[0m\n");
+    printf("------------------------\n");
+
+    /* Open LitePCIe device. */
+    fd = open(litepcie_device, O_RDWR);
+    if (fd < 0) {
+        fprintf(stderr, "Could not init driver\n");
+        exit(1);
+    }
+
+    /* Set new value */
+    new_value = ((enable_fft & 0x01) << CSR_MAIN_CONFIGURATION_FFT_OFFSET);
+    new_value |= ((enable_fir & 0x01) << CSR_MAIN_CONFIGURATION_FIR_OFFSET);
+
+    /* Update stream configuration register. */
+    litepcie_writel(fd, CSR_MAIN_CONFIGURATION_ADDR, new_value);
+
+    close(fd);
+}
+
+
 /* SPI Flash */
 /*-----------*/
 
@@ -490,12 +518,15 @@ static void help(void)
            "-w data_width                     Width of data bus (default = 16).\n"
            "-a                                Automatic DMA RX-Delay calibration.\n"
            "-t duration                       Duration of the test in seconds (default = 0, infinite).\n"
+           "-f enable                         Enable/Disable FFT Module (default = 1).\n"
+           "-i enable                         Enable/Disable FIR Module (default = 1).\n"
            "\n"
            "available commands:\n"
            "info                              Get Board information.\n"
            "\n"
            "dma_test                          Test DMA.\n"
            "scratch_test                      Test Scratch register.\n"
+           "stream_configuration              Stream Configuration (FIR/FFT).\n"
            "\n"
 #ifdef CSR_FLASH_BASE
            "flash_write filename [offset]     Write file contents to SPI Flash.\n"
@@ -518,6 +549,8 @@ int main(int argc, char **argv)
     static int litepcie_data_width;
     static int litepcie_auto_rx_delay;
     static int test_duration = 0; /* Default to 0 for infinite duration.*/
+    static int enable_fft = 1;
+    static int enable_fir = 1;
 
     litepcie_device_num = 0;
     litepcie_data_width = 16;
@@ -527,7 +560,7 @@ int main(int argc, char **argv)
 
     /* Parameters. */
     for (;;) {
-        c = getopt(argc, argv, "hc:w:zeat:");
+        c = getopt(argc, argv, "hc:w:zeat:f:i:");
         if (c == -1)
             break;
         switch(c) {
@@ -552,6 +585,12 @@ int main(int argc, char **argv)
         case 't':
             test_duration = atoi(optarg);
             break;
+        case 'f':
+            enable_fft = atoi(optarg);
+            break;
+        case 'i':
+            enable_fir = atoi(optarg);
+            break;
         default:
             exit(1);
         }
@@ -572,6 +611,8 @@ int main(int argc, char **argv)
     /* Scratch cmds. */
     else if (!strcmp(cmd, "scratch_test"))
         scratch_test();
+    else if (!strcmp(cmd, "stream_configuration"))
+        stream_configuration(enable_fft, enable_fir);
     /* SPI Flash cmds. */
 #if CSR_FLASH_BASE
     else if (!strcmp(cmd, "flash_write")) {

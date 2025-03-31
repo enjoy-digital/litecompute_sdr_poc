@@ -3,13 +3,16 @@ LDFLAGS=-g
 CC=$(CROSS_COMPILE)gcc
 AR=ar
 
-PROGS=litepcie_util litepcie_test
+PROGS=litepcie_fir litepcie_util litepcie_test
 
 all: $(PROGS)
 
 liblitepcie/liblitepcie.a: liblitepcie/litepcie_dma.o liblitepcie/litepcie_flash.o liblitepcie/litepcie_helpers.o
 	ar rcs $@ $+
 	ranlib $@
+
+litepcie_fir: liblitepcie/liblitepcie.a litepcie_fir.o
+	$(CC) $(LDFLAGS) -o $@ $^ -Lliblitepcie -lm -llitepcie
 
 litepcie_util: liblitepcie/liblitepcie.a litepcie_util.o
 	$(CC) $(LDFLAGS) -o $@ $^ -Lliblitepcie -llitepcie
