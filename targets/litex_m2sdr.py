@@ -60,6 +60,7 @@ from gateware.measurement import MultiClkMeasurement
 from software import generate_litepcie_software
 
 from gateware.maia_sdr_fft import MaiaSDRFFT
+from gateware.maia_sdr_fir import MaiaSDRFIR
 
 # CRG ----------------------------------------------------------------------------------------------
 
@@ -153,6 +154,7 @@ class BaseSoC(SoCMini):
         with_fft_window = False,
         fft_order_log2  = 5,
         fft_radix       = 2,
+        with_fir        = False,
     ):
         # Platform ---------------------------------------------------------------------------------
 
@@ -467,7 +469,10 @@ class BaseSoC(SoCMini):
             "clk4" : si5351_clk1,
         })
 
-        # MAIA SDR FFT -----------------------------------------------------------------------------
+        # MAIA SDR DSP -----------------------------------------------------------------------------
+
+        # MAIA SDR FFT.
+        # -------------
         if with_fft:
             self.fft = MaiaSDRFFT(platform,
                 data_width  = 16,
@@ -486,35 +491,73 @@ class BaseSoC(SoCMini):
 
                 self.crg.pll.create_clkout(self.cd_sys2x, sys_clk_freq * 2)
 
-            # PCIe <-> MaiaSDRFFT.
-            # --------------------
+        # MAIA SDR FIR.
+        # -------------
+        if with_fir:
+            self.fir = fir = MaiaSDRFIR(platform,
+                data_in_width  = 16,
+                data_out_width = 16,
+                coeff_width    = 18,
+                decim_width    = 7,
+                oper_width     = 7,
+                macc_trunc     = 0,
+                len_log2       = 8,
+                clk_domain     = "sys",
+                with_csr       = True,
+            )
 
-            #self.tx_conv = ResetInserter()(stream.Converter(64, 32))
-            # FIXME: FFT output size is not always == input size
-            self.rx_conv = ResetInserter()(stream.Converter(32, 64))
 
-            self.comb += [
-                # RFIC -> FFT.
-                self.ad9361.source.connect(self.fft.sink, omit=["ready", "data"]),
-                self.ad9361.source.ready.eq(self.fft.sink.ready | self.header.rx.sink.ready),
-                self.fft.sink.re.eq(self.ad9361.source.data[:16]), # Only keep first channel (testmode)
-                self.fft.sink.im.eq(self.ad9361.source.data[16:]), # Only keep first channel (testmode)
+            # RFIC -> [MaiaSDRFIR] -> MaiaSDRFFT.
+            # -----------------------------------
 
-                # FFT -> Converter.
-                self.fft.source.connect(self.rx_conv.sink, omit=["re", "im"]),
-                self.rx_conv.sink.data.eq(Cat(self.fft.source.re, self.fft.source.im)),
+            if with_fft and with_fir:
+                # CSR (FIR enable/disable (bypass)).
+                # ----------------------------------
+                self._fft_fir_cfg = CSRStorage(description="Stream Configuration.", fields=[
+                    CSRField("fir", size=1, offset=0, values=[
+                        ("``0b0``", "Disable FIR Filter."),
+                        ("``0b1``", "Enable  FIR Filter."),
+                    ], reset = 0b1),
+                    CSRField("fft", size=1, offset=1, values=[
+                        ("``0b0``", "Disable FFT."),
+                        ("``0b1``", "Enable  FFT."),
+                    ], reset = 0b1),
+                ])
 
-                # Converter -> PCIe DMA1 Source.
-                self.rx_conv.source.connect(self.pcie_dma1.sink, omit=["first", "last"]),
+                # FIXME: FFT output size is not always == input size
+                self.rx_conv = ResetInserter()(stream.Converter(32, 64))
 
-                # Disable DMA1 synchronizer.
-                self.pcie_dma1.synchronizer.pps.eq(1),
+                self.comb += [
+                    # RFIC -> FFT or FIR.
+                    If(self._fft_fir_cfg.fields.fir,
+                        # RFIC -> FIR.
+                        self.ad9361.source.connect(self.fir.sink, omit=["ready", "data"]),
+                        self.ad9361.source.ready.eq(self.fir.sink.ready | self.header.rx.sink.ready),
+                        self.fir.sink.re.eq(self.ad9361.source.data[:16]), # Only keep first channel (testmode)
+                        self.fir.sink.im.eq(self.ad9361.source.data[16:]), # Only keep first channel (testmode)
+                        # FIR -> FFT.
+                       self.fir.source.connect(self.fft.sink),
+                    ).Else(
+                        self.ad9361.source.connect(self.fft.sink, omit=["ready", "data"]),
+                        self.ad9361.source.ready.eq(self.fft.sink.ready | self.header.rx.sink.ready),
+                        self.fft.sink.re.eq(self.ad9361.source.data[:16]), # Only keep first channel (testmode)
+                        self.fft.sink.im.eq(self.ad9361.source.data[16:]), # Only keep first channel (testmode)
+                    ),
 
-                # Disables/clear FFT when no stream.
-                self.fft.reset.eq(~self.pcie_dma1.writer.enable),
-                #self.tx_conv.reset.eq(~self.pcie_dma1.writer.enable),
-                self.rx_conv.reset.eq(~self.pcie_dma1.writer.enable),
-            ]
+                    # FFT -> Converter.
+                    self.fft.source.connect(self.rx_conv.sink, omit=["re", "im"]),
+                    self.rx_conv.sink.data.eq(Cat(self.fft.source.re, self.fft.source.im)),
+
+                    # Converter -> PCIe DMA1 Source.
+                    self.rx_conv.source.connect(self.pcie_dma1.sink, omit=["first", "last"]),
+
+                    # Disable DMA1 synchronizer.
+                    self.pcie_dma1.synchronizer.pps.eq(1),
+
+                    # Disables/clear FFT when no stream.
+                    self.fft.reset.eq(~self.pcie_dma1.writer.enable),
+                    self.rx_conv.reset.eq(~self.pcie_dma1.writer.enable),
+                ]
 
     # LiteScope Probes (Debug) ---------------------------------------------------------------------
 
@@ -618,7 +661,10 @@ def main():
     parser.add_argument("--with-fft",        action="store_true",     help="Enable FFT Module.")
     parser.add_argument("--with-fft-window", action="store_true",     help="Enable FFT Window.")
     parser.add_argument("--fft-order-log2",  default=5,   type=int,   help="Log2 of the FFT order.")
-    parser.add_argument("--fft-radix",       default=2,   type=int,   help="Radix 2/4.")
+    parser.add_argument("--fft-radix",       default=2,               help="Radix 2/4.")
+
+    # FIR parameters.
+    parser.add_argument("--with-fir",        action="store_true",     help="Enable FIR Module.")
 
     # Litescope Analyzer Probes.
     probeopts = parser.add_mutually_exclusive_group()
@@ -654,6 +700,9 @@ def main():
         with_fft_window = args.with_fft_window,
         fft_order_log2  = args.fft_order_log2,
         fft_radix       = args.fft_radix,
+
+        # FIR.
+        with_fir        = args.with_fir,
     )
 
     # LiteScope Analyzer Probes.
