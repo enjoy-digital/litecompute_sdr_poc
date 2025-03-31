@@ -128,9 +128,13 @@ static void stream_configuration(int enable_fft, int enable_fir)
     /* Set new value */
     new_value = ((enable_fft & 0x01) << CSR_MAIN_CONFIGURATION_FFT_OFFSET);
     new_value |= ((enable_fir & 0x01) << CSR_MAIN_CONFIGURATION_FIR_OFFSET);
+    printf("Write 0x%08x to FIR/FFT configuration register:\n", new_value);
 
     /* Update stream configuration register. */
     litepcie_writel(fd, CSR_MAIN_CONFIGURATION_ADDR, new_value);
+
+    new_value = litepcie_readl(fd, CSR_MAIN_CONFIGURATION_ADDR);
+    printf("Read  0x%08x to FIR/FFT configuration register:\n", new_value);
 
     close(fd);
 }
