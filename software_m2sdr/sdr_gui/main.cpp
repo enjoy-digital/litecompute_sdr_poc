@@ -913,6 +913,7 @@ static void load_fir_coefficients(const char *filename, float fs, float fc,
         "../../tools/gen_fir_taps.py --file %s --fs %f --fc %f --length %d --coeff-size %d --operations %d --decimation %d --num-coeffs %d %s",
         coeff_filename, fs, fc, num_taps, 18, operations, decimation, 256,
         (is_odd) ? "--odd_operations": "");
+    printf("%s\n", cmd);
     system(cmd);
 
     /* Read coefficients and load */
@@ -1004,12 +1005,12 @@ void ShowM2SDRFIRCtrlPanel()
     ImGui::Text("Sample Rate:");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(120.0f);
-    ImGui::InputFloat("##coeff", &g_fir_sample_rate);
+    ImGui::InputFloat("##coeff", &g_fir_sample_rate, 1.0f, 10.0f);
     ImGui::SameLine();
     ImGui::Text("Cutoff Frequency:");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(120.0f);
-    ImGui::InputFloat("##fc", &g_fir_cutoff);
+    ImGui::InputFloat("##fc", &g_fir_cutoff, 1.0f, 10.0f);
 
     /* Fir Parameters */
     ImGui::Separator();
@@ -1116,6 +1117,8 @@ void ShowM2SDRFFTPlotPanel()
             }
         }
     }
+    if (g_enable_fir)
+        max_fft = 10000;
     ImGui::Text("FFT Magnitude:");
     PlotLinesWithAxis("IplotAxis", g_fft_data, n, -2.0f, max_fft + 10, ImVec2(1010, 300), true);
     if (g_fft_enable_waterfall) {
