@@ -91,7 +91,7 @@ static float tone_amplitude = 1.0f;
 void ShowM2SDRTonePanel()
 {
     ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(350, 220), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(350, 175), ImGuiCond_Always);
 
     ImGui::Begin("M2SDR Tone Utility", nullptr);
     {
@@ -745,7 +745,7 @@ static bool g_animate_wave   = false;
 static int  g_raw_waterfall_framecount = 0;
 void ShowM2SDRRawIQPlotPanel()
 {
-    ImGui::SetNextWindowPos(ImVec2(10, 230), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(10, 185), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(635, 800), ImGuiCond_Always);
 
     ImGui::Begin("M2SDR Plot Panel");
@@ -880,7 +880,7 @@ void fill_fft_invert_addr()
 }
 
 // -----------------------------------------------------------------------------
-// FFT Plot Panel Utilities (FIR management)
+// FIR Control Panel Utilities
 // -----------------------------------------------------------------------------
 static void update_fir_configuration(const char *filename, uint32_t decimation,
     uint32_t operations, bool is_odd)
@@ -959,9 +959,8 @@ static void load_fir_coefficients(const char *filename, float fs, float fc,
     close(fd);
 }
 // -----------------------------------------------------------------------------
-// FFT Plot Panel
+// FIR Control Panel
 // -----------------------------------------------------------------------------
-static int g_fft_waterfall_framecount = 0;
 static bool g_enable_fir = 1;
 static bool g_fir_odd_operations = false;
 static int g_fir_decim = 2;
@@ -969,22 +968,15 @@ static int g_fir_operations = 3;
 static float g_fir_cutoff = 1e6;
 static float g_fir_sample_rate = 4e6;
 
-void ShowM2SDRFFTPlotPanel()
+void ShowM2SDRFIRCtrlPanel()
 {
-    ImGui::SetNextWindowPos(ImVec2(645, 10), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(1024, 800), ImGuiCond_Always);
-
-    ImGui::Begin("M2SDR FFT Plot Panel");
-
-    ImGui::InputText("Device", fft_device_name, IM_ARRAYSIZE(fft_device_name));
-    ImGui::Separator();
-
-    ImGui::Checkbox("Enable Thread", &g_thread_fft_started);
-
-    // FIR configuration.
     bool enable_fir = g_enable_fir;
 
-    ImGui::SeparatorText("FIR");
+    ImGui::SetNextWindowPos(ImVec2(645, 10), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(1024, 175), ImGuiCond_Always);
+
+    ImGui::Begin("M2SDR FIR Control Panel");
+
     ImGui::Checkbox("Enable", &enable_fir);
     if (enable_fir !=  g_enable_fir) {
         g_enable_fir = enable_fir;
@@ -1035,6 +1027,7 @@ void ShowM2SDRFFTPlotPanel()
     ImGui::SameLine();
     ImGui::Checkbox("##Odd", &g_fir_odd_operations);
     ImGui::Separator();
+
     if (ImGui::Button("update FIR Configuration")) {
         /* Load new Coefficients Taps */
         load_fir_coefficients(fft_device_name, g_fir_sample_rate, g_fir_cutoff,
@@ -1042,6 +1035,24 @@ void ShowM2SDRFFTPlotPanel()
         /* Update FIR Parameters*/
         update_fir_configuration(fft_device_name, g_fir_decim, g_fir_operations, g_fir_odd_operations);
     }
+    ImGui::End();
+}
+// -----------------------------------------------------------------------------
+// FFT Plot Panel
+// -----------------------------------------------------------------------------
+static int g_fft_waterfall_framecount = 0;
+
+void ShowM2SDRFFTPlotPanel()
+{
+    ImGui::SetNextWindowPos(ImVec2(645, 185), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(1024, 800), ImGuiCond_Always);
+
+    ImGui::Begin("M2SDR FFT Plot Panel");
+
+    ImGui::InputText("Device", fft_device_name, IM_ARRAYSIZE(fft_device_name));
+    ImGui::Separator();
+
+    ImGui::Checkbox("Enable Thread", &g_thread_fft_started);
 	uint16_t average = 1;
 
     // Waterfall options
@@ -1106,7 +1117,7 @@ void ShowM2SDRFFTPlotPanel()
         }
     }
     ImGui::Text("FFT Magnitude:");
-    PlotLinesWithAxis("IplotAxis", g_fft_data, n, -2.0f, max_fft + 10, ImVec2(768, 300), true);
+    PlotLinesWithAxis("IplotAxis", g_fft_data, n, -2.0f, max_fft + 10, ImVec2(1010, 300), true);
     if (g_fft_enable_waterfall) {
         ImGui::Text("Waterfall (latest at bottom):");
         ShowWaterfall(g_fft_waterfall, g_fft_waterfall_nextrow, g_fft_color_map_idx);
@@ -1350,6 +1361,9 @@ int main(int, char**)
 
         // The RF Utility panel
         //ShowM2SDRRFPanel();
+
+        // FIR/FFT Control panel
+        ShowM2SDRFIRCtrlPanel();
 
         // The FFT Plot panel (FFT, Waterfall, etc.)
         ShowM2SDRFFTPlotPanel();
