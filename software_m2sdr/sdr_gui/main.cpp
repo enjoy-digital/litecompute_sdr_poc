@@ -605,14 +605,14 @@ static void ShowWaterfall(float (&g_waterfall)[WATERFALL_HEIGHT][WATERFALL_WIDTH
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     ImVec2 p0 = ImGui::GetCursorScreenPos();
 
-    for (int row = 0; row < WATERFALL_HEIGHT; row++) {
+    for (int row = WATERFALL_HEIGHT-1; row >= 0; row--) {
         int ring_row = (g_waterfall_nextrow - row + WATERFALL_HEIGHT) % WATERFALL_HEIGHT;
         for (int col = 0; col < WATERFALL_WIDTH; col++) {
             float mag = g_waterfall[ring_row][col];
             ImU32 col_u32 = MagnitudeToColor(mag, 500.0f, g_color_map_idx);
 
             float x = p0.x + (float)col;
-            float y = p0.y + (float)(WATERFALL_HEIGHT - 1 - row);
+            float y = p0.y + (float)(row);
             draw_list->AddRectFilled(ImVec2(x, y),
                                      ImVec2(x+1, y+1),
                                      col_u32);
@@ -830,7 +830,7 @@ void ShowM2SDRRawIQPlotPanel()
         PlotLinesWithAxis("FFTAxis", g_raw_data, n, -2.0f, 500.0, ImVec2(768, 300), true);
 
         if (g_raw_enable_waterfall) {
-            ImGui::Text("Waterfall (latest at bottom):");
+            ImGui::Text("Waterfall (latest at top):");
             ShowWaterfall(g_raw_waterfall, g_raw_waterfall_nextrow, g_raw_color_map_idx);
         }
     }
@@ -1148,7 +1148,7 @@ void ShowM2SDRFFTPlotPanel()
     ImGui::Text("FFT Magnitude:");
     PlotLinesWithAxis("IplotAxis", g_fft_data, n, -2.0f, max_fft + 10, ImVec2(1010, 300), true);
     if (g_fft_enable_waterfall) {
-        ImGui::Text("Waterfall (latest at bottom):");
+        ImGui::Text("Waterfall (latest at top):");
         ShowWaterfall(g_fft_waterfall, g_fft_waterfall_nextrow, g_fft_color_map_idx);
     }
 
