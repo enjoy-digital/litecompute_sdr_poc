@@ -879,6 +879,31 @@ void fill_fft_invert_addr()
     }
 }
 
+void fftshift(float* data, int length) {
+    // Check if length is valid
+    if (length <= 0) return;
+
+    // Calculate midpoint
+    int half = length / 2;
+
+    // Create temporary array to store first half
+    float* temp = new float[half];
+
+    // Copy first half to temp
+    for (int i = 0; i < half; i++)
+        temp[i] = data[i];
+
+    // Move second half to first half
+    for (int i = 0; i < half; i++)
+        data[i] = data[i + half];
+    // Copy temp (original first half) to second half
+    for (int i = 0; i < half; i++)
+        data[i + half] = temp[i];
+
+    // Clean up
+    delete[] temp;
+}
+
 // -----------------------------------------------------------------------------
 // FIR Control Panel Utilities
 // -----------------------------------------------------------------------------
@@ -1119,6 +1144,7 @@ void ShowM2SDRFFTPlotPanel()
     }
     if (g_enable_fir)
         max_fft = 10000;
+    fftshift(g_fft_data, n);
     ImGui::Text("FFT Magnitude:");
     PlotLinesWithAxis("IplotAxis", g_fft_data, n, -2.0f, max_fft + 10, ImVec2(1010, 300), true);
     if (g_fft_enable_waterfall) {
