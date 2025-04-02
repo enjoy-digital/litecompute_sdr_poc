@@ -997,6 +997,16 @@ void ShowM2SDRFFTPlotPanel()
         close(fd);
     }
 
+    /* FIR Status */
+    ImGui::Separator();
+    ImGui::Text("Overflow Status:");
+    int fd = open(fft_device_name, O_RDONLY);
+    int status = litepcie_readl(fd, CSR_MAIN_FIR_STATUS_ADDR) & 0x01;
+    close(fd);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(40.0f);
+    ImGui::InputInt("##overflow", &status, 0, 0, ImGuiInputTextFlags_ReadOnly);
+
     /* Sample Rate and CutOff Frequency*/
     ImGui::Separator();
     ImGui::Text("Sample Rate:");
