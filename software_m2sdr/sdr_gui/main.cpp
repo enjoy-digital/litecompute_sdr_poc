@@ -895,12 +895,30 @@ static void update_fir_configuration(const char *filename, uint32_t decimation,
     close(fd);
 }
 
-static void load_fir_coefficients(const char *filename, const char *coeffs_filename)
+static void load_fir_coefficients(const char *filename, float fs, float fc,
+    uint32_t decimation, uint32_t operations, bool is_odd)
 {
     long coeffs_file_len;
-    int fd = open(fft_device_name, O_RDWR);
+    int fd;
 
-    FILE *fd_coefficients = fopen(filename, "r");
+    /* Before all: Generates coefficients */
+    const char coeff_filename[256] = "/tmp/coeffs.bin";
+    uint32_t num_mult = operations * 2;
+    if (is_odd)
+        num_mult--;
+    uint32_t num_taps = num_mult * decimation;
+
+    char cmd[1024];
+    sprintf(cmd,
+        "../../tools/gen_fir_taps.py --file %s --fs %f --fc %f --length %d --coeff-size %d --operations %d --decimation %d --num-coeffs %d %s",
+        coeff_filename, fs, fc, num_taps, 18, operations, decimation, 256,
+        (is_odd) ? "--odd_operations": "");
+    system(cmd);
+
+    /* Read coefficients and load */
+    fd = open(fft_device_name, O_RDWR);
+
+    FILE *fd_coefficients = fopen(coeff_filename, "r");
     if (!fd_coefficients) {
         fprintf(stderr, "Could not coefficients file %sn", filename);
         return;
@@ -944,11 +962,12 @@ static void load_fir_coefficients(const char *filename, const char *coeffs_filen
 // FFT Plot Panel
 // -----------------------------------------------------------------------------
 static int g_fft_waterfall_framecount = 0;
-static char g_fir_coeff_lut[1024];
 static bool g_enable_fir = 1;
 static bool g_fir_odd_operations = false;
 static int g_fir_decim = 2;
-static int g_fir_operations = 16;
+static int g_fir_operations = 3;
+static float g_fir_cutoff = 1e6;
+static float g_fir_sample_rate = 4e6;
 
 void ShowM2SDRFFTPlotPanel()
 {
@@ -978,13 +997,19 @@ void ShowM2SDRFFTPlotPanel()
         close(fd);
     }
 
+    /* Sample Rate and CutOff Frequency*/
     ImGui::Separator();
-    ImGui::Text("FIR coeffcients:");
-    ImGui::InputText("##coeff", g_fir_coeff_lut, IM_ARRAYSIZE(g_fir_coeff_lut));
+    ImGui::Text("Sample Rate:");
     ImGui::SameLine();
-    if (ImGui::Button("load")) {
-        load_fir_coefficients(fft_device_name, g_fir_coeff_lut);
-    }
+    ImGui::SetNextItemWidth(120.0f);
+    ImGui::InputFloat("##coeff", &g_fir_sample_rate);
+    ImGui::SameLine();
+    ImGui::Text("Cutoff Frequency:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(120.0f);
+    ImGui::InputFloat("##fc", &g_fir_cutoff);
+
+    /* Fir Parameters */
     ImGui::Separator();
     ImGui::Text("Decimation:");
     ImGui::SameLine();
@@ -1001,6 +1026,10 @@ void ShowM2SDRFFTPlotPanel()
     ImGui::Checkbox("##Odd", &g_fir_odd_operations);
     ImGui::Separator();
     if (ImGui::Button("update FIR Configuration")) {
+        /* Load new Coefficients Taps */
+        load_fir_coefficients(fft_device_name, g_fir_sample_rate, g_fir_cutoff,
+            g_fir_decim, g_fir_operations, g_fir_odd_operations);
+        /* Update FIR Parameters*/
         update_fir_configuration(fft_device_name, g_fir_decim, g_fir_operations, g_fir_odd_operations);
     }
 	uint16_t average = 1;
