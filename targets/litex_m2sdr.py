@@ -535,10 +535,9 @@ class BaseSoC(SoCMini):
                     If(~self.pcie_dma1.writer.enable | self._fir_status.we,
                         self._fir_status.fields.overflow.eq(0),
                     ).Elif(~self.fir_fifo.sink.ready & fir_fifo_ready_d,
-                        self._fir_status.fields.overflow.eq(0),
+                        self._fir_status.fields.overflow.eq(1),
                     )
                 ]
-
 
                 # FIXME: FFT output size is not always == input size
                 self.rx_conv  = ResetInserter()(stream.Converter(32, 64))
@@ -675,13 +674,13 @@ def main():
     parser.add_argument("--with-sata",       action="store_true",     help="Enable SATA Storage.")
 
     # FFT parameters.
-    parser.add_argument("--with-fft",        action="store_true",     help="Enable FFT Module.")
-    parser.add_argument("--with-fft-window", action="store_true",     help="Enable FFT Window.")
-    parser.add_argument("--fft-order-log2",  default=10,  type=int,   help="Log2 of the FFT order.")
-    parser.add_argument("--fft-radix",       default="2",             help="Radix 2/4.")
+    parser.add_argument("--without-fft",        action="store_true",     help="Enable FFT Module.")
+    parser.add_argument("--without-fft-window", action="store_true",     help="Enable FFT Window.")
+    parser.add_argument("--fft-order-log2",     default=10,  type=int,   help="Log2 of the FFT order.")
+    parser.add_argument("--fft-radix",          default="2",             help="Radix 2/4.")
 
     # FIR parameters.
-    parser.add_argument("--with-fir",        action="store_true",     help="Enable FIR Module.")
+    parser.add_argument("--without-fir",        action="store_true",     help="Disable FIR Module.")
 
     # Litescope Analyzer Probes.
     probeopts = parser.add_mutually_exclusive_group()
@@ -713,13 +712,13 @@ def main():
         with_sata     = args.with_sata,
 
         # FFT.
-        with_fft        = args.with_fft,
-        with_fft_window = args.with_fft_window,
+        with_fft        = not args.without_fft,
+        with_fft_window = not args.without_fft_window,
         fft_order_log2  = args.fft_order_log2,
         fft_radix       = args.fft_radix,
 
         # FIR.
-        with_fir        = args.with_fir,
+        with_fir        = not args.without_fir,
     )
 
     # LiteScope Analyzer Probes.
