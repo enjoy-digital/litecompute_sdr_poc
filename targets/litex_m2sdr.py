@@ -267,7 +267,7 @@ class BaseSoC(SoCMini):
         if with_pcie:
             if variant == "baseboard":
                 assert pcie_lanes == 1
-            pcie_dmas = {True: 1, False: 2}[not with_fft]
+            pcie_dmas = {True: 1, False: 2}[not (with_fft or with_fir)]
             self.pcie_phy = S7PCIEPHY(platform, platform.request(f"pcie_x{pcie_lanes}_{variant}"),
                 data_width  = {1: 64, 2: 64, 4: 128}[pcie_lanes],
                 bar0_size   = 0x20000,
@@ -471,6 +471,20 @@ class BaseSoC(SoCMini):
 
         # MAIA SDR DSP -----------------------------------------------------------------------------
 
+        # SDR DSP Generals CSR (FIR enable/disable (bypass)).
+        # ---------------------------------------------------
+        if with_fft and with_fir:
+            self._fft_fir_cfg = CSRStorage(description="Stream Configuration.", fields=[
+                CSRField("fir", size=1, offset=0, values=[
+                    ("``0b0``", "Disable FIR Filter."),
+                    ("``0b1``", "Enable  FIR Filter."),
+                ], reset = 0b1),
+                CSRField("fft", size=1, offset=1, values=[
+                    ("``0b0``", "Disable FFT."),
+                    ("``0b1``", "Enable  FFT."),
+                ], reset = 0b1),
+            ])
+
         # MAIA SDR FFT.
         # -------------
         if with_fft:
@@ -494,9 +508,16 @@ class BaseSoC(SoCMini):
         # MAIA SDR FIR.
         # -------------
         if with_fir:
+            # MAIA SDR FIR Status.
+            #---------------------
+            self._fir_status = CSRStatus(description="FIR Status", fields=[
+                CSRField("overflow", size=1, offset=0),
+            ])
+
             # FIFO to check overflow.
-            self.fir_fifo  = ResetInserter()(stream.SyncFIFO([("data", 32)], 16))
-            self.fir = fir = MaiaSDRFIR(platform,
+            fir_fifo_ready_d = Signal()
+            self.fir_fifo    = ResetInserter()(stream.SyncFIFO([("data", 32)], 16))
+            self.fir = fir   = MaiaSDRFIR(platform,
                 data_in_width  = 16,
                 data_out_width = 16,
                 coeff_width    = 18,
@@ -508,72 +529,72 @@ class BaseSoC(SoCMini):
                 with_csr       = True,
             )
 
+            # MAIA SDR FIR Logic.
+            # -------------------
+            # Store ready -> not ready for FIR FIFO (means FIR is too slow).
+            self.sync += [
+                fir_fifo_ready_d.eq(self.fir_fifo.sink.ready),
+                If(~self.pcie_dma1.writer.enable,
+                    self._fir_status.fields.overflow.eq(0),
+                ).Elif(~self.fir_fifo.sink.ready & fir_fifo_ready_d,
+                    self._fir_status.fields.overflow.eq(1),
+                )
+            ]
 
-            # RFIC -> FIFO -> [MaiaSDRFIR] -> MaiaSDRFFT.
-            # -----------------------------------
 
-            if with_fft and with_fir:
-                fir_fifo_ready_d = Signal()
-                # CSR (FIR enable/disable (bypass)).
-                # ----------------------------------
-                self._fft_fir_cfg = CSRStorage(description="Stream Configuration.", fields=[
-                    CSRField("fir", size=1, offset=0, values=[
-                        ("``0b0``", "Disable FIR Filter."),
-                        ("``0b1``", "Enable  FIR Filter."),
-                    ], reset = 0b1),
-                    CSRField("fft", size=1, offset=1, values=[
-                        ("``0b0``", "Disable FFT."),
-                        ("``0b1``", "Enable  FFT."),
-                    ], reset = 0b1),
-                ])
-                self._fir_status = CSRStatus(description="FIR Status", fields=[
-                    CSRField("overflow", size=1, offset=0),
-                ])
+        # RFIC -> FIFO -> [MaiaSDRFIR] -> MaiaSDRFFT -> PCIe.
+        # ---------------------------------------------------
 
-                self.sync += [
-                    fir_fifo_ready_d.eq(self.fir_fifo.sink.ready),
-                    If(~self.pcie_dma1.writer.enable | self._fir_status.we,
-                        self._fir_status.fields.overflow.eq(0),
-                    ).Elif(~self.fir_fifo.sink.ready & fir_fifo_ready_d,
-                        self._fir_status.fields.overflow.eq(1),
-                    )
-                ]
+        if with_fft:
+            # FIXME: FFT output size is not always == input size
+            self.rx_conv  = ResetInserter()(stream.Converter(32, 64))
 
-                # FIXME: FFT output size is not always == input size
-                self.rx_conv  = ResetInserter()(stream.Converter(32, 64))
+            # Default: AD9361 -> FFT
+            self.comb += [
+                self.ad9361.source.connect(self.fft.sink, omit=["ready", "data"]),
+                #self.ad9361.source.ready.eq(self.fft.sink.ready | self.header.rx.sink.ready),
+                self.ad9361.source.ready.eq(self.header.rx.sink.ready),
+                self.fft.sink.re.eq(self.ad9361.source.data[ 0:16]), # Only keep first channel (testmode)
+                self.fft.sink.im.eq(self.ad9361.source.data[16:32]), # Only keep first channel (testmode)
+            ]
 
+            # FIR: according to Configuration CSR
+            if with_fir:
                 self.comb += [
                     # RFIC -> FFT or FIR.
                     If(self._fft_fir_cfg.fields.fir,
                         # RFIC -> FIR.
-                        self.ad9361.source.connect(self.fir_fifo.sink, omit=["ready"]),
-                        self.ad9361.source.ready.eq(self.fir_fifo.sink.ready | self.header.rx.sink.ready),
-                        self.fir_fifo.source.connect(self.fir.sink, omit=["data"]),
-                        self.fir.sink.re.eq(self.fir_fifo.source.data[:16]), # Only keep first channel (testmode)
-                        self.fir.sink.im.eq(self.fir_fifo.source.data[16:]), # Only keep first channel (testmode)
+                        self.ad9361.source.connect(self.fir_fifo.sink, omit=["ready", "data"]),
+                        #self.ad9361.source.ready.eq(self.fir_fifo.sink.ready | self.header.rx.sink.ready),
+                        self.fir_fifo.sink.data.eq(self.ad9361.source.data[:32]),
+                        self.ad9361.source.ready.eq(self.header.rx.sink.ready),
                         # FIR -> FFT.
-                       self.fir.source.connect(self.fft.sink),
-                    ).Else(
-                        self.ad9361.source.connect(self.fft.sink, omit=["ready", "data"]),
-                        self.ad9361.source.ready.eq(self.fft.sink.ready | self.header.rx.sink.ready),
-                        self.fft.sink.re.eq(self.ad9361.source.data[:16]), # Only keep first channel (testmode)
-                        self.fft.sink.im.eq(self.ad9361.source.data[16:]), # Only keep first channel (testmode)
+                        self.fir.source.connect(self.fft.sink),
                     ),
-
-                    # FFT -> Converter.
-                    self.fft.source.connect(self.rx_conv.sink, omit=["re", "im"]),
-                    self.rx_conv.sink.data.eq(Cat(self.fft.source.re, self.fft.source.im)),
-
-                    # Converter -> PCIe DMA1 Source.
-                    self.rx_conv.source.connect(self.pcie_dma1.sink, omit=["first", "last"]),
-
-                    # Disable DMA1 synchronizer.
-                    self.pcie_dma1.synchronizer.pps.eq(1),
-
-                    # Disables/clear FFT when no stream.
-                    self.fft.reset.eq(~self.pcie_dma1.writer.enable),
-                    self.rx_conv.reset.eq(~self.pcie_dma1.writer.enable),
+                    # FIFO -> FIR.
+                    self.fir_fifo.source.connect(self.fir.sink, omit=["data"]),
+                    self.fir.sink.re.eq(self.fir_fifo.source.data[ 0:16]),
+                    self.fir.sink.im.eq(self.fir_fifo.source.data[16:32]),
+                    self.fir_fifo.reset.eq(~self.pcie_dma1.writer.enable),
                 ]
+
+            # Default: FFT -> RX_CONV -> PCIe.
+            # --------------------------------
+            self.comb += [
+                # FFT -> Converter.
+                self.fft.source.connect(self.rx_conv.sink, omit=["re", "im"]),
+                self.rx_conv.sink.data.eq(Cat(self.fft.source.re, self.fft.source.im)),
+
+                # Converter -> PCIe DMA1 Source.
+                self.rx_conv.source.connect(self.pcie_dma1.sink, omit=["first", "last"]),
+
+                # Disable DMA1 synchronizer.
+                self.pcie_dma1.synchronizer.pps.eq(1),
+
+                # Disables/clear FFT when no stream.
+                self.fft.reset.eq(~self.pcie_dma1.writer.enable),
+                self.rx_conv.reset.eq(~self.pcie_dma1.writer.enable),
+            ]
 
     # LiteScope Probes (Debug) ---------------------------------------------------------------------
 
