@@ -494,6 +494,8 @@ class BaseSoC(SoCMini):
         # MAIA SDR FIR.
         # -------------
         if with_fir:
+            # FIFO to check overflow.
+            self.fir_fifo  = ResetInserter()(stream.SyncFIFO([("data", 32)], 16))
             self.fir = fir = MaiaSDRFIR(platform,
                 data_in_width  = 16,
                 data_out_width = 16,
@@ -507,10 +509,11 @@ class BaseSoC(SoCMini):
             )
 
 
-            # RFIC -> [MaiaSDRFIR] -> MaiaSDRFFT.
+            # RFIC -> FIFO -> [MaiaSDRFIR] -> MaiaSDRFFT.
             # -----------------------------------
 
             if with_fft and with_fir:
+                fir_fifo_ready_d = Signal()
                 # CSR (FIR enable/disable (bypass)).
                 # ----------------------------------
                 self._fft_fir_cfg = CSRStorage(description="Stream Configuration.", fields=[
@@ -523,18 +526,32 @@ class BaseSoC(SoCMini):
                         ("``0b1``", "Enable  FFT."),
                     ], reset = 0b1),
                 ])
+                self._fir_status = CSRStatus(description="FIR Status", fields=[
+                    CSRField("overflow", size=1, offset=0),
+                ])
+
+                self.sync += [
+                    fir_fifo_ready_d.eq(self.fir_fifo.sink.ready),
+                    If(~self.pcie_dma1.writer.enable | self._fir_status.we,
+                        self._fir_status.fields.overflow.eq(0),
+                    ).Elif(~self.fir_fifo.sink.ready & fir_fifo_ready_d,
+                        self._fir_status.fields.overflow.eq(0),
+                    )
+                ]
+
 
                 # FIXME: FFT output size is not always == input size
-                self.rx_conv = ResetInserter()(stream.Converter(32, 64))
+                self.rx_conv  = ResetInserter()(stream.Converter(32, 64))
 
                 self.comb += [
                     # RFIC -> FFT or FIR.
                     If(self._fft_fir_cfg.fields.fir,
                         # RFIC -> FIR.
-                        self.ad9361.source.connect(self.fir.sink, omit=["ready", "data"]),
-                        self.ad9361.source.ready.eq(self.fir.sink.ready | self.header.rx.sink.ready),
-                        self.fir.sink.re.eq(self.ad9361.source.data[:16]), # Only keep first channel (testmode)
-                        self.fir.sink.im.eq(self.ad9361.source.data[16:]), # Only keep first channel (testmode)
+                        self.ad9361.source.connect(self.fir_fifo.sink, omit=["ready"]),
+                        self.ad9361.source.ready.eq(self.fir_fifo.sink.ready | self.header.rx.sink.ready),
+                        self.fir_fifo.source.connect(self.fir.sink, omit=["data"]),
+                        self.fir.sink.re.eq(self.fir_fifo.source.data[:16]), # Only keep first channel (testmode)
+                        self.fir.sink.im.eq(self.fir_fifo.source.data[16:]), # Only keep first channel (testmode)
                         # FIR -> FFT.
                        self.fir.source.connect(self.fft.sink),
                     ).Else(
@@ -660,8 +677,8 @@ def main():
     # FFT parameters.
     parser.add_argument("--with-fft",        action="store_true",     help="Enable FFT Module.")
     parser.add_argument("--with-fft-window", action="store_true",     help="Enable FFT Window.")
-    parser.add_argument("--fft-order-log2",  default=5,   type=int,   help="Log2 of the FFT order.")
-    parser.add_argument("--fft-radix",       default=2,               help="Radix 2/4.")
+    parser.add_argument("--fft-order-log2",  default=10,  type=int,   help="Log2 of the FFT order.")
+    parser.add_argument("--fft-radix",       default="2",             help="Radix 2/4.")
 
     # FIR parameters.
     parser.add_argument("--with-fir",        action="store_true",     help="Enable FIR Module.")
