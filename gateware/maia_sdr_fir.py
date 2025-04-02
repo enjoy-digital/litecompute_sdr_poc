@@ -31,8 +31,8 @@ def compute_coefficients(operations=16, decimation=1, odd_operations=False, num_
 
     if len(taps) == 0:
         num_taps = decimation * num_mult
-        taps     = np.arange(1, num_taps // 2 + 1)
-        #taps     = np.ones(num_taps // 2)
+        #taps     = np.arange(1, num_taps // 2 + 1)
+        taps     = np.ones(num_taps // 2)
         taps     = np.concatenate((taps, taps[::-1]))
 
     coeffs = np.zeros(num_coeffs, 'int')
@@ -73,10 +73,10 @@ def model(macc_trunc, ow, taps, decimation, re_in, im_in):
             else:
                 re1 += sr
                 im1 += si
-        re0       = clamp_nbits(re0 >> macc_trunc, ow)
-        im0       = clamp_nbits(im0 >> macc_trunc, ow)
-        re1       = clamp_nbits(re1 >> macc_trunc, ow)
-        im1       = clamp_nbits(im1 >> macc_trunc, ow)
+        re0       = clamp_nbits(int(re0) >> macc_trunc, ow)
+        im0       = clamp_nbits(int(im0) >> macc_trunc, ow)
+        re1       = clamp_nbits(int(re1) >> macc_trunc, ow)
+        im1       = clamp_nbits(int(im1) >> macc_trunc, ow)
         re_out[j] = clamp_nbits(re0 + re1, ow)
         im_out[j] = clamp_nbits(im0 + im1, ow)
     return re_out, im_out
