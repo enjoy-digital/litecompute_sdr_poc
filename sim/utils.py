@@ -9,14 +9,17 @@ from litex.soc.interconnect import stream
 # Coefficients Streamer ----------------------------------------------------------------------------
 
 class CoefficientsStreamer(LiteXModule):
-    def __init__(self, data_width, addr_width, datas):
+    def __init__(self, data_width, addr_width, datas, storage_width=None):
         self.source = source = stream.Endpoint([("data", data_width), ("addr", addr_width)])
+
+        if storage_width is None:
+            storage_width = data_width
 
         # # #
 
         count = Signal(addr_width)
 
-        mem  = Memory(data_width, len(datas), init=datas)
+        mem  = Memory(storage_width, len(datas), init=datas)
         port = mem.get_port(async_read=True)
         self.specials += mem, port
 
@@ -24,7 +27,7 @@ class CoefficientsStreamer(LiteXModule):
             port.adr.eq(count),
             source.valid.eq(source.ready),
             source.last.eq( count == (len(datas) - 1)),
-            source.data.eq(port.dat_r),
+            source.data.eq(port.dat_r[:data_width]),
             source.addr.eq(count),
         ]
         self.sync += [
