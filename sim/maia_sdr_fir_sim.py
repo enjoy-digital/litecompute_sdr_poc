@@ -215,8 +215,8 @@ class SimSoC(SoCCore):
 
         # Read taps and coefficients from file.
         # -------------------------------------
-        coeffs_data = read_binary_file("/tmp/coeffs2.bin", coeffs_width, signed=False, convert=True)
-        taps_data   = read_binary_file("/tmp/taps2.bin",  coeffs_width, signed=True, convert=False)
+        coeffs_data = read_binary_file("/tmp/coeffs.bin", coeffs_width, signed=False, convert=True)
+        taps_data   = read_binary_file("/tmp/taps.bin",   coeffs_width, signed=True,  convert=False)
         #taps_data   = taps_data[:-1]
         assert len(taps_data) == coeff_len, f"{len(taps_data)} {coeff_len}"
 
