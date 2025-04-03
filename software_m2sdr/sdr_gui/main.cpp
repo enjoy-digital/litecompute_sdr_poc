@@ -946,7 +946,7 @@ static void load_fir_coefficients(const char *filename, float fs, float fc,
 
     FILE *fd_coefficients = fopen(coeff_filename, "r");
     if (!fd_coefficients) {
-        fprintf(stderr, "Could not coefficients file %sn", filename);
+        fprintf(stderr, "Could not open coefficients file %sn", coeff_filename);
         return;
     }
 
