@@ -826,6 +826,7 @@ void ShowM2SDRRawIQPlotPanel()
         PlotLinesWithAxis("QplotAxis", g_raw_q_data, n, -1.0f, 1.0f, ImVec2(768, 200), true);
     } else {
         // FFT
+        fftshift(g_raw_data, n);
         ImGui::Text("FFT Magnitude:");
         PlotLinesWithAxis("FFTAxis", g_raw_data, n, -2.0f, 500.0, ImVec2(768, 300), true);
 
@@ -1142,8 +1143,8 @@ void ShowM2SDRFFTPlotPanel()
             }
         }
     }
-    if (g_enable_fir)
-        max_fft = 10000;
+    //if (g_enable_fir)
+    //    max_fft = 10000;
     fftshift(g_fft_data, n);
     ImGui::Text("FFT Magnitude:");
     PlotLinesWithAxis("IplotAxis", g_fft_data, n, -2.0f, max_fft + 10, ImVec2(1010, 300), true);
