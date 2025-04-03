@@ -119,6 +119,11 @@ def main():
     (len_taps, _, coeffs) = compute_coefficients(args.operations,
         args.decimation, args.odd_operations, args.num_coeffs, h)
 
+    with open(args.taps_file, "wb") as fd:
+        for value in h:
+            binary_data = struct.pack('<i', int(value))
+            fd.write(binary_data)
+
     with open(args.file, "wb") as fd:
         for value in coeffs:
             binary_data = struct.pack('<i', value)
