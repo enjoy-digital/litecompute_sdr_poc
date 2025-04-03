@@ -7,6 +7,7 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 
+import subprocess
 import sys
 import argparse
 
@@ -37,6 +38,20 @@ from utils import PacketStreamer, PacketChecker, CoefficientsStreamer
 from gateware.maia_sdr_fir import MaiaSDRFIR, compute_coefficients, model, clamp_nbits
 
 # Utils --------------------------------------------------------------------------------------------
+
+def read_binary_file(file_path, coeffs_width=18, signed=True, convert=False):
+    samples = []
+    with open(file_path, 'rb') as f:
+        while True:
+            chunk = f.read(4)
+            if not chunk:
+                break
+            value = int.from_bytes(chunk, byteorder='little', signed=signed)  # Convert to integer
+            if convert:
+                value = two_complement_encode(value, coeffs_width)
+            samples.append(value)
+    return samples
+
 def two_complement_encode(value, bits):
     if (value & (1 << (bits - 1))) != 0:
         value = value - (1 << bits)
@@ -86,6 +101,8 @@ def generate_sample_data(frequency, sample_rate, repetitions, data_width, num_ta
 
 def read_sample_data_from_file(sample_file, data_width):
     samples = []
+    re_in   = []
+    im_in   = []
     i       = 0
     with open(sample_file, 'rb') as f:
         while True:
@@ -95,15 +112,19 @@ def read_sample_data_from_file(sample_file, data_width):
             chunk = f.read(2)  # Read 16 bits (2 bytes)
             if not chunk:
                 break
-            re = int.from_bytes(chunk, byteorder='little', signed=True)  # Convert to integer
+            re    = int.from_bytes(chunk, byteorder='little', signed=True)  # Convert to integer
+            re_in.append(re)
+            re    = two_complement_encode(re, data_width)
+
             chunk = f.read(2)  # Read 16 bits (2 bytes)
             if not chunk:
                 break
-            im = int.from_bytes(chunk, byteorder='little', signed=True)  # Convert to integer
+            im    = int.from_bytes(chunk, byteorder='little', signed=True)  # Convert to integer
+            im_in.append(im)
+            im    = two_complement_encode(im, data_width)
+
             samples.append((im << data_width) | (re))
-            #const = 2
-            #samples.append((const << data_width) | (const))
-    return samples
+    return (samples, re_in, im_in)
 
 # IOs ----------------------------------------------------------------------------------------------
 
@@ -135,12 +156,16 @@ class Platform(SimPlatform):
 # Sim ----------------------------------------------------------------------------------------------
 
 class SimSoC(SoCCore):
-    def __init__(self, sys_clk_freq=int(200e6), data_in_width=16, data_out_width=16,
+    def __init__(self, sys_clk_freq=int(200e6), data_in_width=16, data_out_width=32,
         stream_file           = None,
-        coeff_len             = 6,
+        operations            = 6,
+        odd_operations        = False,
         macc_trunc            = 0,
+        coeffs_width          = 18,
         len_log2              = 8,
-        decimation            = 5,
+        decimation            = 2,
+        sample_rate           = 4e6,
+        cutoff_freq           = 1e6,
         signal_freq           = 10e6,
         with_etherbone        = False,
         etherbone_mac_address = 0x10e2d5000001,
@@ -160,23 +185,44 @@ class SimSoC(SoCCore):
         SoCMini.__init__(self, platform, clk_freq=sys_clk_freq)
 
         # Constants --------------------------------------------------------------------------------
-        operation = coeff_len // 2
-        coeff_len = operation * 2 * decimation
+        num_mult  = operations * 2
+        if odd_operations:
+            num_mult -= 1
+        coeff_len = num_mult * decimation
 
         # Signals ----------------------------------------------------------------------------------
         coeff_write_end = Signal()
 
         # Coefficients Streamer --------------------------------------------------------------------
-        (taps_len, taps_data, coeffs_data) = compute_coefficients(operation, decimation, False, 2**len_log2)
-        with open("coeff_lut.txt", "w") as fd:
-            for i, c in enumerate(coeffs_data):
-                fd.write(f"{c}\n")
-        with open("taps_lut.txt", "w") as fd:
-            for i, c in enumerate(taps_data):
-                fd.write(f"{c}\n")
 
-        assert taps_len == coeff_len
-        self.coeff_streamer = CoefficientsStreamer(18, len_log2, coeffs_data)
+        # Compute taps and coefficients.
+        # ------------------------------
+        cmd = [
+            "../tools/gen_fir_taps.py",
+            "--file",       "/tmp/coeffs.bin",
+            "--taps-file",  "/tmp/taps.bin",
+            "--fs",         str(sample_rate),
+            "--fc",         str(cutoff_freq),
+            "--length",     str(coeff_len),
+            "--operations", str(operations),
+            "--decimation", str(decimation),
+            "--num-coeffs", str(2**len_log2),
+            {True: "--odd_operations", False: ""}[odd_operations],
+        ]
+        ret = subprocess.run(" ".join(cmd), shell=True)
+        if ret.returncode != 0:
+            raise OSError("Error occured during coefficients and taps generation.")
+
+        # Read taps and coefficients from file.
+        # -------------------------------------
+        coeffs_data = read_binary_file("/tmp/coeffs2.bin", coeffs_width, signed=False, convert=True)
+        taps_data   = read_binary_file("/tmp/taps2.bin",  coeffs_width, signed=True, convert=False)
+        #taps_data   = taps_data[:-1]
+        assert len(taps_data) == coeff_len, f"{len(taps_data)} {coeff_len}"
+
+        # Adds CoefficientsStreamer Module.
+        # ---------------------------------
+        self.coeff_streamer = CoefficientsStreamer(18, len_log2, coeffs_data, 32)
 
         # MAIA SDR FIR -----------------------------------------------------------------------------
         self.fir = fir = MaiaSDRFIR(platform,
@@ -196,10 +242,10 @@ class SimSoC(SoCCore):
             fir.decimation.eq(decimation),
 
             # Operations minus one.
-            fir.operations_minus_one.eq(operation - 1),
+            fir.operations_minus_one.eq(operations - 1),
 
             # ODD Operations.
-            fir.odd_operations.eq(0),
+            fir.odd_operations.eq(odd_operations),
         ]
 
         # FSM (Coeff write).
@@ -226,14 +272,19 @@ class SimSoC(SoCCore):
         ]
 
         # Streamer ---------------------------------------------------------------------------------
+
+        # Read or Create input samples dataset.
+        # -------------------------------------
         if stream_file is None:
             streamer_data, re_in, im_in = generate_sample_data(signal_freq, sys_clk_freq, 10000, data_in_width,
                 num_taps   = len(taps_data),
                 decimation = decimation,
             )
         else:
-            streamer_data = read_sample_data_from_file(stream_file, data_in_width)
+            streamer_data, re_in, im_in = read_sample_data_from_file(stream_file, data_in_width)
 
+        # Adds PacketStreamer Module and connect it to FIR instance.
+        # ----------------------------------------------------------
         # The first sample must be dropped to match model.
         self.streamer = streamer = PacketStreamer(data_in_width * 2, streamer_data[1:], 0)
         self.comb += [
@@ -295,14 +346,23 @@ class SimSoC(SoCCore):
             ])
 
         # Sim Debug --------------------------------------------------------------------------------
-        self.sync += If(fir.source.valid, Display("%04x %04x", fir.source.re, fir.source.im))
+
+        # Force signed format.
+        # --------------------
+        re_signed = Signal((data_out_width, True))
+        im_signed = Signal((data_out_width, True))
+        self.comb += [
+            re_signed.eq(fir.source.re),
+            im_signed.eq(fir.source.im),
+        ]
+        self.sync += If(fir.source.valid, Display("%d %d", re_signed, im_signed))
         #self.sync += If(fir.coeff_wren, Display("%x %x", fir.coeff_waddr, fir.coeff_wdata))
 
         # Sim Finish -------------------------------------------------------------------------------
         if not with_etherbone:
             self.sync += If(streamer.source.last, Finish())
         else:
-            ##self.sync += If(coeff_write_end, Finish())
+            #self.sync += If(coeff_write_end, Finish())
             cycles = Signal(32)
             ##self.sync += cycles.eq(cycles + 1)
             self.sync += If(cycles == 1000, Finish())
