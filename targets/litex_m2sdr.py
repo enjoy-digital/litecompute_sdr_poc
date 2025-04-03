@@ -155,6 +155,7 @@ class BaseSoC(SoCMini):
         fft_order_log2  = 5,
         fft_radix       = 2,
         with_fir        = False,
+        macc_trunc      = 17,
     ):
         # Platform ---------------------------------------------------------------------------------
 
@@ -523,7 +524,7 @@ class BaseSoC(SoCMini):
                 coeff_width    = 18,
                 decim_width    = 7,
                 oper_width     = 7,
-                macc_trunc     = 0,
+                macc_trunc     = macc_trunc,
                 len_log2       = 8,
                 clk_domain     = "sys",
                 with_csr       = True,
@@ -702,6 +703,7 @@ def main():
 
     # FIR parameters.
     parser.add_argument("--without-fir",        action="store_true",     help="Disable FIR Module.")
+    parser.add_argument("--macc-trunc",         default=17, type=int,    help="Truncation length for output of each MACC.")
 
     # Litescope Analyzer Probes.
     probeopts = parser.add_mutually_exclusive_group()
@@ -740,6 +742,7 @@ def main():
 
         # FIR.
         with_fir        = not args.without_fir,
+        macc_trunc      = args.macc_trunc,
     )
 
     # LiteScope Analyzer Probes.
