@@ -9,6 +9,7 @@
 
 import sys
 import argparse
+import pm_remez
 import struct
 import matplotlib.pyplot as plt
 import numpy as np
@@ -17,11 +18,32 @@ from scipy import signal
 sys.path.append("../..")
 from gateware.maia_sdr_fir import compute_coefficients
 
+def design_antialias_lowpass(decimation, transition_bandwidth, numtaps,
+    stopband_weight = 1.0,
+    one_over_f      = False,
+    bigfloat        = False,
+    worN            = 4096):
+
+    passband_end   = 0.5 * (1 - transition_bandwidth) / decimation
+    stopband_start = 0.5 * (1 + transition_bandwidth) / decimation
+
+    # Stopband weight is a constant or linear slope depending
+
+    # on one_over_f parameter.
+    sweight = ((stopband_weight, stopband_weight * 0.5 / stopband_start)
+        if one_over_f else stopband_weight)
+
+    design = pm_remez.remez(numtaps, [0, passband_end, stopband_start, 0.5],
+        [1, 0], weight=[1, sweight], bigfloat=bigfloat)
+    return design.impulse_response
+
 def main():
     parser = argparse.ArgumentParser(description="FIR Generator.")
     parser.add_argument("--file",       default=None,            help="output coefficients file.")
+    parser.add_argument("--taps-file",  default=None,            help="output Taps file.")
 
     # TAPS configuration.
+    parser.add_argument("--model",      default="pm-remez",        help="Coefficients Model.")
     parser.add_argument("--fs",         default=10000, type=float, help="Sampling Frequency (Hz).")
     parser.add_argument("--fc",         default=100,   type=float, help="Cutoff Frequency (Hz).")
     parser.add_argument("--length",     default=100,   type=int,   help="Filter length.")
@@ -46,7 +68,7 @@ def main():
     fs       = args.fs
     fc       = args.fc
     if not args.bypass_gen:
-        if False:
+        if args.model == "simple":
             # Normalized cutoff frequency
             fc_normalized = args.fc / args.fs
 
@@ -62,7 +84,7 @@ def main():
 
             # Normalize the filter to ensure unity gain at DC
             h = h / np.max(h)
-        else:
+        elif args.model == "firls":
             # Normalize frequency to 0-1 range (Nyquist = 1)
             f_nyquist = fs / 2
             f_norm = fc / f_nyquist
@@ -80,19 +102,25 @@ def main():
 
             # Normalize to 1.
             h = h / np.max(np.abs(h))
+        elif args.model == "pm-remez":
+            # Normalize frequency to 0-1 range (Nyquist = 1)
+            f_nyquist = fs / 2
+            f_norm    = fc / f_nyquist
+            h         = design_antialias_lowpass(args.decimation, f_norm, args.length)
+            # Normalize to 1.
+            h         = h / np.max(np.abs(h))
+        else:
+            print(error)
 
         # Apply gain to fit coeff_size
         gain = 2**(args.coeff_size -1) -1 # Maximum positive value
-        h = h * gain
-    #h = []
+        h    = h * gain
 
     (len_taps, _, coeffs) = compute_coefficients(args.operations,
         args.decimation, args.odd_operations, args.num_coeffs, h)
 
     with open(args.file, "wb") as fd:
-        # '<i' specifies little-endian signed 32-bit integer
         for value in coeffs:
-            # Pack each integer into 4 bytes in little-endian format
             binary_data = struct.pack('<i', value)
             fd.write(binary_data)
 
