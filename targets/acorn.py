@@ -29,6 +29,10 @@ from litex.soc.cores.led   import LedChaser
 from litepcie.phy.s7pciephy import S7PCIEPHY
 from litepcie.software import generate_litepcie_software_headers
 
+from litedram.frontend.fifo import LiteDRAMFIFO
+from litedram.modules import MT41K512M16
+from litedram.phy import s7ddrphy
+
 from liteeth.phy.a7_gtp import QPLLSettings, QPLL
 
 from litescope import LiteScopeAnalyzer
@@ -39,7 +43,7 @@ from gateware.maia_sdr_fir import MaiaSDRFIR
 # CRG ----------------------------------------------------------------------------------------------
 
 class CRG(LiteXModule):
-    def __init__(self, platform, sys_clk_freq, with_fft_window=False):
+    def __init__(self, platform, sys_clk_freq, with_dram=False, with_fft_window=False):
         self.rst          = Signal()
         self.cd_sys       = ClockDomain()
         self.cd_sys4x     = ClockDomain()
@@ -59,7 +63,15 @@ class CRG(LiteXModule):
         self.comb += pll.reset.eq(self.rst)
         pll.register_clkin(clk200_se, 200e6)
         pll.create_clkout(self.cd_sys,       sys_clk_freq)
+        if with_dram:
+            pll.create_clkout(self.cd_sys4x,     4*sys_clk_freq)
+            pll.create_clkout(self.cd_sys4x_dqs, 4*sys_clk_freq, phase=90)
         platform.add_false_path_constraints(self.cd_sys.clk, pll.clkin) # Ignore sys_clk to pll.clkin path created by SoC's rst.
+
+        # IDelayCtrl.
+        if with_dram:
+            self.specials += Instance("BUFG", i_I=clk200_se, o_O=self.cd_idelay.clk)
+            self.idelayctrl = S7IDELAYCTRL(self.cd_idelay)
 
         # MAIA FFT.
         if with_fft_window:
@@ -67,28 +79,47 @@ class CRG(LiteXModule):
 
 # BaseSoC -----------------------------------------------------------------------------------------
 
-class BaseSoC(SoCMini):
+class BaseSoC(SoCCore):
     def __init__(self, variant="cle-215+", sys_clk_freq=125e6,
-        with_pcie       = False,
-        with_led_chaser = True,
-        with_uartbone   = True,
-        with_fft_window = False,
-        fft_radix       = 2,
-        fft_order_log2  = 10,
+        with_pcie          = False,
+        with_led_chaser    = True,
+        with_uartbone      = True,
+        with_litedram_fifo = False,
+        with_fft_window    = False,
+        fft_radix          = 2,
+        fft_order_log2     = 10,
         **kwargs):
         platform      = sqrl_acorn.Platform(variant=variant)
         platform.name = "acorn" # Keep target name
         platform.add_extension(sqrl_acorn._litex_acorn_baseboard_mini_io, prepend=True)
 
         # SoCCore ----------------------------------------------------------------------------------
-        SoCMini.__init__(self, platform, sys_clk_freq,
-            ident         = "LiteX SoC on Acorn CLE-101/215(+)",
-            ident_version = True,
-            with_uartbone = with_uartbone,
+        SoCCore.__init__(self, platform, sys_clk_freq,
+            ident               = "LiteX SoC on Acorn CLE-101/215(+)",
+            ident_version       = True,
+            integrated_rom_size = 0x9800,
+            with_uartbone       = with_uartbone,
+            uart_name           = "crossover",
+            no_uart             = True,
         )
 
         # CRG --------------------------------------------------------------------------------------
-        self.crg = CRG(platform, sys_clk_freq, with_fft_window=with_fft_window)
+        self.crg = CRG(platform, sys_clk_freq,
+            with_dram       = with_litedram_fifo,
+            with_fft_window = with_fft_window,
+        )
+
+        # DDR3 SDRAM -------------------------------------------------------------------------------
+        if with_litedram_fifo:
+            self.ddrphy = s7ddrphy.A7DDRPHY(platform.request("ddram"),
+                memtype        = "DDR3",
+                nphases        = 4,
+                sys_clk_freq   = sys_clk_freq)
+            self.add_sdram("sdram",
+                phy           = self.ddrphy,
+                module        = MT41K512M16(sys_clk_freq, "1:4"),
+                l2_cache_size = kwargs.get("l2_size", 8192)
+            )
 
         # PCIe -------------------------------------------------------------------------------------
         if with_pcie:
@@ -117,6 +148,17 @@ class BaseSoC(SoCMini):
                 qpllsettings1 = None,
             )
             self.pcie_phy.use_external_qpll(qpll_channel=qpll.channels[0])
+
+        # LiteDRAMFIFO -----------------------------------------------------------------------------
+        if with_litedram_fifo:
+            self.fifo_dsp = fifo_dsp = LiteDRAMFIFO(
+                data_width = 32,
+                base       = 0x00000000,
+                depth      = 0x01000000, # 16MB
+                write_port = self.sdram.crossbar.get_port(mode="write"),
+                read_port  = self.sdram.crossbar.get_port(mode="read"),
+                with_bypass=True
+            )
 
         # MAIA SDR FIR -----------------------------------------------------------------------------
         self.fir = fir = MaiaSDRFIR(platform,
@@ -160,22 +202,35 @@ class BaseSoC(SoCMini):
         ep1 = stream.Endpoint([("re", 16), ("im", 16)])
         ep2 = stream.Endpoint([("re", 16), ("im", 16)])
 
-        # PCIe -> MaiaHDLFIR -> MaiaHDLFFT -> PCie.
+        # PCIe [-> LiteDRAMFIFO] -> MaiaHDLFIR -> MaiaHDLFFT -> PCie.
         # -----------------------------------------
 
         # FIXME: FFT output size is not always == input size
         self.tx_conv = ResetInserter()(stream.Converter(64, 32))
         self.rx_conv = ResetInserter()(stream.Converter(32, 64))
 
+        # PCIe DMA0 Source -> Converter sink.
+        self.pcie_dma0.source.connect(self.tx_conv.sink),
+
+        if with_litedram_fifo:
+            self.comb += [
+                # Converter Source -> LiteDRAMFIFO sink.
+                self.tx_conv.source.connect(fifo_dsp.sink),
+
+                # LiteDRAMFIFO source -> EP0.
+                self.fifo_dsp.source.connect(ep0, omit=["data"]),
+                ep0.re.eq(self.fifo_dsp.source.data[ 0:16]),
+                ep0.im.eq(self.fifo_dsp.source.data[16:32]),
+            ]
+        else:
+            self.comb += [
+                # Converter -> EP0.
+                self.tx_conv.source.connect(ep0, omit=["data"]),
+                ep0.re.eq(self.tx_conv.source.data[ 0:16]),
+                ep0.im.eq(self.tx_conv.source.data[16:32]),
+            ]
+
         self.comb += [
-            # PCIe DMA0 Source -> Converter.
-            self.pcie_dma0.source.connect(self.tx_conv.sink),
-
-            # Converter -> EP0.
-            self.tx_conv.source.connect(ep0, omit=["data"]),
-            ep0.re.eq(self.tx_conv.source.data[ 0:16]),
-            ep0.im.eq(self.tx_conv.source.data[16:32]),
-
             # FIR.
             If(self._configuration.fields.fir,
                 # EP0 -> FIR -> EP1.
@@ -203,9 +258,9 @@ class BaseSoC(SoCMini):
             self.rx_conv.source.connect(self.pcie_dma0.sink, omit=["first", "last"]),
 
             # Disables/clear FFT when no stream.
-            self.fft.reset.eq(~self.pcie_dma0.reader.enable),
-            self.tx_conv.reset.eq(~self.pcie_dma0.reader.enable),
-            self.rx_conv.reset.eq(~self.pcie_dma0.reader.enable),
+            self.fft.reset.eq(~self.pcie_dma0.writer.enable),
+            self.tx_conv.reset.eq(~self.pcie_dma0.writer.enable),
+            self.rx_conv.reset.eq(~self.pcie_dma0.writer.enable),
         ]
 
         # Leds -------------------------------------------------------------------------------------
@@ -252,6 +307,9 @@ def main():
     parser.add_argument("--fft-radix",       default="2",              help="Radix 2/4.")
     parser.add_argument("--fft-order-log2",  default=5,    type=int,   help="Log2 of the FFT order.")
 
+    # Stream options.
+    parser.add_argument("--with-litedram-fifo", action="store_true",   help="Enable LiteDRAM between DMA Writer and Reader.")
+
     # Litescope Analyzer Probes.
     probeopts = parser.add_mutually_exclusive_group()
     probeopts.add_argument("--with-fft-datapath-probe", action="store_true", help="Enable FFT Datapath Probe.")
@@ -259,12 +317,13 @@ def main():
     args = parser.parse_args()
 
     soc = BaseSoC(
-        variant         = args.variant,
-        with_pcie       = True,
-        with_uartbone   = True,
-        with_fft_window = args.with_fft_window,
-        fft_radix       = args.fft_radix,
-        fft_order_log2  = args.fft_order_log2,
+        variant            = args.variant,
+        with_pcie          = True,
+        with_uartbone      = True,
+        with_litedram_fifo = args.with_litedram_fifo,
+        with_fft_window    = args.with_fft_window,
+        fft_radix          = args.fft_radix,
+        fft_order_log2     = args.fft_order_log2,
     )
 
     if args.with_fft_datapath_probe:
