@@ -654,8 +654,8 @@ static bool g_thread_fft_started = false;
 static bool g_thread_fft_finish = false;
 static bool g_thread_raw_iq_started = false;
 static bool g_thread_raw_iq_finish = false;
-static char raw_iq_device_name[256] = "/dev/m2sdr0";
-static char fft_device_name[256] = "/dev/m2sdr1";
+static char raw_iq_device_name[256] = "/dev/m2sdr1";
+static char fft_device_name[256] = "/dev/m2sdr2";
 static bool fft_zero_copy = 0;
 static int  g_plot_mode = 0;
 
@@ -732,11 +732,13 @@ void UpdateData(int id, const char *device_name,
                 num_samples = DMA_BUFFER_SIZE / (step * sizeof(int16_t));
 
                 {
-                    std::lock_guard<std::mutex> lock(*buffer_mutex);
+                    std::unique_lock<std::mutex> lock(*buffer_mutex);
+
                     for (size_t i = 0; i < num_samples; i++) {
                         i_buff.push_back((float)samples[step * i + 0] / scaling); // I, normalized
                         q_buff.push_back((float)samples[step * i + 1] / scaling); // Q, normalized
                     }
+                    lock.unlock();
                 }
             }
         }
@@ -817,9 +819,10 @@ void ShowM2SDRRawIQPlotPanel()
     int n = 1024;
     if (g_thread_raw_iq_started) {
         {
-            std::lock_guard<std::mutex> lock(raw_buffer_mutex);
             if (!raw_q_buffer.empty() && !raw_i_buffer.empty() &&
                     (raw_q_buffer.size() >= 1024) && (raw_i_buffer.size() >= 1024)) {
+                std::unique_lock<std::mutex> lock(raw_buffer_mutex);
+
                 for (int i = 0;  i < n; i++) {
                     g_raw_i_data[i] = raw_i_buffer[i];
                     g_raw_q_data[i] = raw_q_buffer[i];
@@ -827,6 +830,7 @@ void ShowM2SDRRawIQPlotPanel()
                 // Remove all unused samples
                 raw_i_buffer.clear();
                 raw_q_buffer.clear();
+                lock.unlock();
             }
         }
     }
