@@ -212,6 +212,33 @@ options:
 
 This target performs `PCIe` -> `FFT` -> `PCIe` processing.
 
+### Preparing FIR Coeffcients
+
+The *tools* directory contains the script *gen_fir_taps.py*, which generates
+coefficients table ready to be loaded:
+```bash
+
+usage: gen_fir_taps.py [-h] [--file FILE] [--taps-file TAPS_FILE] [--model MODEL] [--fs FS] [--fc FC] [--length LENGTH] [--coeff-size COEFF_SIZE] [--bypass-gen] [--operations OPERATIONS] [--odd_operations]
+                       [--decimation DECIMATION] [--num-coeffs NUM_COEFFS]
+
+```
+
+with:
+- `--file`: output coefficients file (to uses with the MaiaSDRFir).
+- `--taps-file`: Output Taps file (contains only coefficients).
+- `--model`: Algorithm to uses between `firls` and `pm-remez` (Default: `pm-remez`)
+- `--fs`: Sampling Frequency (Hz).
+- `--fc`: Cutoff Frequency (Hz).
+- `--length`: Filter length (see note below).
+- `--coeff-size`: Coefficients Size (bits).
+- `--operations`: number of operations to perform
+- `--odd_operations`: Is Odd/Even operations.
+- `--decimation`: Decimation factor (must be > 1).
+- `--num-coeffs`: Coefficients RAM capacity (up to 256)
+
+`--length` must equal to $operations * 2 * decimation$ for even operations, or
+$((operations * 2) - 1) * decimation$ for odd operations
+
 ### Preparing Complex Samples
 
 The *software/user* directory contains the script *gen_lut.py*, which generates lookup table data:
