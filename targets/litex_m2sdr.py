@@ -268,7 +268,7 @@ class BaseSoC(SoCMini):
         if with_pcie:
             if variant == "baseboard":
                 assert pcie_lanes == 1
-            pcie_dmas = {True: 1, False: 2}[not (with_fft or with_fir)]
+            pcie_dmas = {True: 1, False: 3}[not (with_fft or with_fir)]
             self.pcie_phy = S7PCIEPHY(platform, platform.request(f"pcie_x{pcie_lanes}_{variant}"),
                 data_width  = {1: 64, 2: 64, 4: 128}[pcie_lanes],
                 bar0_size   = 0x20000,
@@ -394,10 +394,8 @@ class BaseSoC(SoCMini):
         # ------------------
         self.comb += [
             self.header.tx.source.connect(self.ad9361.sink),
-            self.ad9361.source.connect(self.header.rx.sink, omit=["ready"]),
+            self.ad9361.source.connect(self.header.rx.sink),
         ]
-        if not with_fft:
-            self.comb += self.ad9361.source.ready.eq(self.header.rx.sink.ready)
 
         # Crossbar.
         # ---------
@@ -432,6 +430,16 @@ class BaseSoC(SoCMini):
             self.comb += self.crossbar.demux.source1.connect(self.eth_rx_streamer.sink)
         if with_sata:
             pass # TODO.
+
+        # FIR/FFT Raw Channel
+        if with_fft or with_fir:
+            # AD9361 -> DMA1.
+            # ---------------
+            self.comb += [
+                self.ad9361.source.connect(self.pcie_dma1.sink, omit=["ready"]),
+                # Disable DMA1 synchronizer.
+                self.pcie_dma1.synchronizer.pps.eq(1),
+            ]
 
         # Timing Constraints/False Paths -----------------------------------------------------------
 
@@ -535,7 +543,7 @@ class BaseSoC(SoCMini):
             # Store ready -> not ready for FIR FIFO (means FIR is too slow).
             self.sync += [
                 fir_fifo_ready_d.eq(self.fir_fifo.sink.ready),
-                If(~self.pcie_dma1.writer.enable,
+                If(~self.pcie_dma2.writer.enable,
                     self._fir_status.fields.overflow.eq(0),
                 ).Elif(~self.fir_fifo.sink.ready & fir_fifo_ready_d,
                     self._fir_status.fields.overflow.eq(1),
@@ -553,7 +561,6 @@ class BaseSoC(SoCMini):
             # Default: AD9361 -> FFT
             self.comb += [
                 self.ad9361.source.connect(self.fft.sink, omit=["ready", "data"]),
-                #self.ad9361.source.ready.eq(self.fft.sink.ready | self.header.rx.sink.ready),
                 self.ad9361.source.ready.eq(self.header.rx.sink.ready),
                 self.fft.sink.re.eq(self.ad9361.source.data[ 0:16]), # Only keep first channel (testmode)
                 self.fft.sink.im.eq(self.ad9361.source.data[16:32]), # Only keep first channel (testmode)
@@ -566,9 +573,7 @@ class BaseSoC(SoCMini):
                     If(self._fft_fir_cfg.fields.fir,
                         # RFIC -> FIR.
                         self.ad9361.source.connect(self.fir_fifo.sink, omit=["ready", "data"]),
-                        #self.ad9361.source.ready.eq(self.fir_fifo.sink.ready | self.header.rx.sink.ready),
                         self.fir_fifo.sink.data.eq(self.ad9361.source.data[:32]),
-                        self.ad9361.source.ready.eq(self.header.rx.sink.ready),
                         # FIR -> FFT.
                         self.fir.source.connect(self.fft.sink),
                     ),
@@ -576,7 +581,7 @@ class BaseSoC(SoCMini):
                     self.fir_fifo.source.connect(self.fir.sink, omit=["data"]),
                     self.fir.sink.re.eq(self.fir_fifo.source.data[ 0:16]),
                     self.fir.sink.im.eq(self.fir_fifo.source.data[16:32]),
-                    self.fir_fifo.reset.eq(~self.pcie_dma1.writer.enable),
+                    self.fir_fifo.reset.eq(~self.pcie_dma2.writer.enable),
                 ]
 
             # Default: FFT -> RX_CONV -> PCIe.
@@ -586,15 +591,15 @@ class BaseSoC(SoCMini):
                 self.fft.source.connect(self.rx_conv.sink, omit=["re", "im"]),
                 self.rx_conv.sink.data.eq(Cat(self.fft.source.re, self.fft.source.im)),
 
-                # Converter -> PCIe DMA1 Source.
-                self.rx_conv.source.connect(self.pcie_dma1.sink, omit=["first", "last"]),
+                # Converter -> PCIe DMA2 Source.
+                self.rx_conv.source.connect(self.pcie_dma2.sink, omit=["first", "last"]),
 
-                # Disable DMA1 synchronizer.
-                self.pcie_dma1.synchronizer.pps.eq(1),
+                # Disable DMA2 synchronizer.
+                self.pcie_dma2.synchronizer.pps.eq(1),
 
                 # Disables/clear FFT when no stream.
-                self.fft.reset.eq(~self.pcie_dma1.writer.enable),
-                self.rx_conv.reset.eq(~self.pcie_dma1.writer.enable),
+                self.fft.reset.eq(~self.pcie_dma2.writer.enable),
+                self.rx_conv.reset.eq(~self.pcie_dma2.writer.enable),
             ]
 
     # LiteScope Probes (Debug) ---------------------------------------------------------------------
