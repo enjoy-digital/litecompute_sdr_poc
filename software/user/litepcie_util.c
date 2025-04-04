@@ -110,7 +110,7 @@ void scratch_test(void)
 
 /* Stream Configuration */
 /*----------------------*/
-static void stream_configuration(int enable_fft, int enable_fir)
+static void stream_configuration(int enable_fft, int enable_fir, int enable_litedram_fifo)
 {
     int fd;
     uint32_t new_value = 0;
@@ -128,13 +128,14 @@ static void stream_configuration(int enable_fft, int enable_fir)
     /* Set new value */
     new_value = ((enable_fft & 0x01) << CSR_MAIN_CONFIGURATION_FFT_OFFSET);
     new_value |= ((enable_fir & 0x01) << CSR_MAIN_CONFIGURATION_FIR_OFFSET);
-    printf("Write 0x%08x to FIR/FFT configuration register:\n", new_value);
+    new_value |= ((enable_litedram_fifo & 0x01) << CSR_MAIN_CONFIGURATION_LITEDRAM_FIFO_OFFSET);
+    printf("Write 0x%08x to FIR/FFT/LiteDRAM configuration register.\n", new_value);
 
     /* Update stream configuration register. */
     litepcie_writel(fd, CSR_MAIN_CONFIGURATION_ADDR, new_value);
 
     new_value = litepcie_readl(fd, CSR_MAIN_CONFIGURATION_ADDR);
-    printf("Read  0x%08x to FIR/FFT configuration register:\n", new_value);
+    printf("Read  0x%08x to FIR/FFT/LiteDRAM configuration register.\n", new_value);
 
     close(fd);
 }
@@ -524,6 +525,7 @@ static void help(void)
            "-t duration                       Duration of the test in seconds (default = 0, infinite).\n"
            "-f enable                         Enable/Disable FFT Module (default = 1).\n"
            "-i enable                         Enable/Disable FIR Module (default = 1).\n"
+           "-l enable                         Enable/Disable LiteDRAM FIFO Module (default = 1).\n"
            "\n"
            "available commands:\n"
            "info                              Get Board information.\n"
@@ -555,6 +557,7 @@ int main(int argc, char **argv)
     static int test_duration = 0; /* Default to 0 for infinite duration.*/
     static int enable_fft = 1;
     static int enable_fir = 1;
+    static int enable_litedram_fifo = 1;
 
     litepcie_device_num = 0;
     litepcie_data_width = 16;
@@ -564,7 +567,7 @@ int main(int argc, char **argv)
 
     /* Parameters. */
     for (;;) {
-        c = getopt(argc, argv, "hc:w:zeat:f:i:");
+        c = getopt(argc, argv, "hc:w:zeat:f:i:l:");
         if (c == -1)
             break;
         switch(c) {
@@ -595,6 +598,9 @@ int main(int argc, char **argv)
         case 'i':
             enable_fir = atoi(optarg);
             break;
+        case 'l':
+            enable_litedram_fifo = atoi(optarg);
+            break;
         default:
             exit(1);
         }
@@ -616,7 +622,7 @@ int main(int argc, char **argv)
     else if (!strcmp(cmd, "scratch_test"))
         scratch_test();
     else if (!strcmp(cmd, "stream_configuration"))
-        stream_configuration(enable_fft, enable_fir);
+        stream_configuration(enable_fft, enable_fir, enable_litedram_fifo);
     /* SPI Flash cmds. */
 #if CSR_FLASH_BASE
     else if (!strcmp(cmd, "flash_write")) {
