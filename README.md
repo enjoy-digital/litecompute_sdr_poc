@@ -86,6 +86,9 @@ git clone https://github.com/maia-sdr/maia-sdr
 cd maia-sdr/maia-hdl
 pip3 install --user
 cd ../..
+
+# pm-remez (to produces FIR coefficients)
+pip3 install --user pm-remez
 ```
 
 ### [> Cloning the Repository / Install
@@ -100,23 +103,21 @@ Execute the following:
 For *Maia SDR* Modules, configurations/parameters are used at build time to produce the Verilog file. It's not possible
 to changes it at run time.
 
-### [> MAIAHDLFFTWrapper
+### [> MaiaHDLFFT
 
 This Module is a wrapper for the [FFT](https://github.com/maia-sdr/maia-sdr/blob/main/maia-hdl/maia_hdl/fft.py)
 
 Example usage:
 
 ```python
-# MAIA HDL FFT Wrapper ---------------------------------------------------------------------
-self.fft = MAIAHDLFFTWrapper(platform,
+# MAIA SDR FFT -----------------------------------------------------------------------------
+self.fft = MaiaSDRFFT(platform,
     data_width  = 16,
     order_log2  = fft_order_log2,
     radix       = radix,
     window      = {True: "blackmanharris", False: None}[with_window],
     cmult3x     = False,
-    cd_domain   = "sys",
-    cd_domain2x = "sys2x",
-    cd_domain3x = "fft_3x",
+    clk_domain  = "sys",
 )
 ```
 
@@ -126,14 +127,24 @@ Where:
 - `radix` is the implementation (maybe be *2*, *4* or *R22*)
 - `window` is an optional windowing applied (allowed parameters: None (no window) or *blackmanharris*
 - `cmult3x` is an optimization, requiring a clock 3 times faster to perform complex multiplication with only one DSP
-- `cd_domain` main core clock domain
-- `cd_domain2x` another clock domain 2 times faster than `cd_domain` (only required when `window` is set to *blackmanharris*
-- `cd_domain3x` 3 times faster clock domain only required when `cmult3x` is set to `True`
+- `clk_domain` main core clock domain
 
 The module provides 2 streams interface:
-- `sink` to receive samples with `data == data_width * 2`, LSB are real part, MSB are imaginary part. `ready` is always set to `1`
-- `source` to propagates results with a `data` size == `instance.out_width * 2`, `last` is set with the last sample of an
-  FFT.
+- `sink` to receive samples. data are filled with `re` and `im`  with a size == `data_width`. `ready` is always set to `1`
+- `source` to propagates results with two subsignals `re` and `im` (size == `instance.out_width * 2`), `last` is set with the last sample of an FFT.
+
+**Note:**
+when windowing support is enabled or `cmult3x` option is set to true, to extra
+clocks are required:
+
+- One clock 2 times faster than `clk_domain` (only required when `window` is set to *blackmanharris*
+- One clock 3 times faster clock domain only required when `cmult3x` is set to `True`
+
+two clocks domains must be added and must be named:
+- `clk_domain`2x
+- `clk_domain`3x
+
+With `clk_domain` the value provided to `clk_domain` parameter
 
 **Connection example:**
 
