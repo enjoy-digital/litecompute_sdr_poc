@@ -103,6 +103,9 @@ class BaseSoC(SoCCore):
             no_uart             = True,
         )
 
+        # Avoid stalling CPU at startup.
+        self.uart.add_auto_tx_flush(sys_clk_freq=sys_clk_freq, timeout=1, interval=128)
+
         # CRG --------------------------------------------------------------------------------------
         self.crg = CRG(platform, sys_clk_freq,
             with_dram       = with_litedram_fifo,
