@@ -197,6 +197,10 @@ class BaseSoC(SoCCore):
                 ("``0b0``", "Disable FFT."),
                 ("``0b1``", "Enable  FFT."),
             ], reset = 0b1),
+            CSRField("litedram_fifo", size=1, offset=2, values=[
+                ("``0b0``", "Disable LiteDRAMFIFO."),
+                ("``0b1``", "Enable  LiteDRAMFIFO."),
+            ], reset = 0b1),
         ])
 
         # TX/RX Datapath ---------------------------------------------------------------------------
@@ -212,25 +216,27 @@ class BaseSoC(SoCCore):
         self.tx_conv = ResetInserter()(stream.Converter(64, 32))
         self.rx_conv = ResetInserter()(stream.Converter(32, 64))
 
-        # PCIe DMA0 Source -> Converter sink.
-        self.pcie_dma0.source.connect(self.tx_conv.sink),
+        self.comb += [
+            # PCIe DMA0 Source -> Converter sink.
+            self.pcie_dma0.source.connect(self.tx_conv.sink),
+
+            # Converter -> EP0 (Default / Bypass LiteDRAM).
+            self.tx_conv.source.connect(ep0, omit=["data"]),
+            ep0.re.eq(self.tx_conv.source.data[ 0:16]),
+            ep0.im.eq(self.tx_conv.source.data[16:32]),
+        ]
 
         if with_litedram_fifo:
             self.comb += [
-                # Converter Source -> LiteDRAMFIFO sink.
-                self.tx_conv.source.connect(fifo_dsp.sink),
+                If(self._configuration.fields.litedram_fifo,
+                    # Converter Source -> LiteDRAMFIFO sink.
+                    self.tx_conv.source.connect(fifo_dsp.sink),
 
-                # LiteDRAMFIFO source -> EP0.
-                self.fifo_dsp.source.connect(ep0, omit=["data"]),
-                ep0.re.eq(self.fifo_dsp.source.data[ 0:16]),
-                ep0.im.eq(self.fifo_dsp.source.data[16:32]),
-            ]
-        else:
-            self.comb += [
-                # Converter -> EP0.
-                self.tx_conv.source.connect(ep0, omit=["data"]),
-                ep0.re.eq(self.tx_conv.source.data[ 0:16]),
-                ep0.im.eq(self.tx_conv.source.data[16:32]),
+                    # LiteDRAMFIFO source -> EP0.
+                    self.fifo_dsp.source.connect(ep0, omit=["data"]),
+                    ep0.re.eq(self.fifo_dsp.source.data[ 0:16]),
+                    ep0.im.eq(self.fifo_dsp.source.data[16:32]),
+                ),
             ]
 
         self.comb += [
