@@ -155,12 +155,12 @@ class BaseSoC(SoCCore):
         # LiteDRAMFIFO -----------------------------------------------------------------------------
         if with_litedram_fifo:
             self.fifo_dsp = fifo_dsp = LiteDRAMFIFO(
-                data_width = 32,
+                data_width = 64,
                 base       = 0x00000000,
                 depth      = 0x01000000, # 16MB
                 write_port = self.sdram.crossbar.get_port(mode="write"),
                 read_port  = self.sdram.crossbar.get_port(mode="read"),
-                with_bypass=True
+                with_bypass= True
             )
 
         # MAIA SDR FIR -----------------------------------------------------------------------------
@@ -210,7 +210,7 @@ class BaseSoC(SoCCore):
         ep2 = stream.Endpoint([("re", 16), ("im", 16)])
 
         # PCIe [-> LiteDRAMFIFO] -> MaiaHDLFIR -> MaiaHDLFFT -> PCie.
-        # -----------------------------------------
+        # -----------------------------------------------------------
 
         # FIXME: FFT output size is not always == input size
         self.tx_conv = ResetInserter()(stream.Converter(64, 32))
