@@ -76,8 +76,8 @@ static void fir_coefficients_write(const char *filename)
 
     /* Write coefficients */
     for (i = 0; i < coeffs_file_len; i++) {
-        litepcie_writel(fd, CSR_FIR_COEFF_WADDR_ADDR, i);
-        litepcie_writel(fd, CSR_FIR_COEFF_WDATA_ADDR, coeffs[i]);
+        litepcie_writel(fd, CSR_SDR_PROCESSING_FIR_COEFF_WADDR_ADDR, i);
+        litepcie_writel(fd, CSR_SDR_PROCESSING_FIR_COEFF_WDATA_ADDR, coeffs[i]);
     }
 
     fclose(fd_coefficients);
@@ -102,13 +102,13 @@ static void fir_configuration(uint32_t decimation, uint32_t operations, uint8_t 
     }
 
     /* write decimation. */
-    litepcie_writel(fd, CSR_FIR_DECIMATION_ADDR, decimation);
+    litepcie_writel(fd, CSR_SDR_PROCESSING_FIR_DECIMATION_ADDR, decimation);
 
     /* write operations (Minus one). */
-    litepcie_writel(fd, CSR_FIR_OPERATIONS_MINUS_ONE_ADDR, operations - 1);
+    litepcie_writel(fd, CSR_SDR_PROCESSING_FIR_OPERATIONS_MINUS_ONE_ADDR, operations - 1);
 
     /* write odd/event operations. */
-    litepcie_writel(fd, CSR_FIR_CFG_ADDR, (odd_operations & 0x01) << CSR_FIR_CFG_ODD_OPERATIONS_OFFSET);
+    litepcie_writel(fd, CSR_SDR_PROCESSING_FIR_CFG_ADDR, (odd_operations & 0x01) << CSR_SDR_PROCESSING_FIR_CFG_ODD_OPERATIONS_OFFSET);
 
     close(fd);
 }
