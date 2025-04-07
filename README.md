@@ -21,7 +21,7 @@ This repository provides two demonstrations:
 
 **Acorn demonstration**
 ```bash
-python3 targets/acorn.py --build [--load] [--flash] [--with-fft-window] [--fft-radix 2/4] [--fft-order-log2 x]
+python3 -m targets.acorn --build [--load] [--flash] [--with-fft-window] [--fft-radix 2/4] [--fft-order-log2 x] [--with-litedram-fifo]
 ```
 With:
 * `--load` loads the bitstream to SRAM.
@@ -29,20 +29,23 @@ With:
 * `--with-fft-window` enables windowing.
 * `--fft-radix` selects between radix 2 and radix 4 (default: 2)
 * `--fft-order-log2` sets the log2 of the FFT size (default: 5)
+* `--with-litedram-fifo` enable integration of the DRAM between DMA reader and DMA writer
 
 **LiteX M2SDR**
 ```bash
-python3 targets/litex_m2sdr.py --build [--load] [--flash] [--with-pcie] [--variant] [--with-fft] [--with-fft-window] [--fft-radix 2/4] [--fft-order-log2 x]
+python3 -m targets.litex_m2sdr --build [--load] [--flash] [--with-pcie] [--variant] [--without-fft] [--with-fft-window] [--fft-radix 2/4] [--fft-order-log2 x]
 ```
 With:
 * `--load` loads the bitstream to SRAM.
 * `--flash` writes the bitstream into the SPI Flash.
 * `--variant` selects between `m2` configuration and `baseboard`.
 * `--with-pcie` enables PCIe support.
-* `--with-fft` enables the FFT module (connected to a second DMA channel).
-* `--with-fft-window` enables windowing.
+* `--without-fft` disables the FFT module (connected to a third DMA channel).
+* `--without-fft-window` disables windowing.
 * `--fft-radix` selects between radix 2 and radix 4 (default: 2).
-* `--fft-order-log2` sets the log2 of the FFT size (default: 5).
+* `--fft-order-log2` sets the log2 of the FFT size (default: 10).
+* `--without-fir` disables FIR.
+* `--macc-trunk` Truncation length for output of each MACC.
 
 ## [> Prepare Environment
 -------------------------
@@ -68,6 +71,14 @@ Execute the following commands in a directory of your choice:
 export LITEX_ENV_VIVADO=/opt/Xilinx/Vivado/2021.2
 ```
 This path assumes Vivado 2021.2 is installed in the */opt* directory. Adjust it as needed.
+
+### [> LiteX M2SDR]
+
+```bash
+git clone https://github.com/enjoy-digital/litex_m2sdr
+cd litex_m2sdr
+pip3 install --user
+```
 
 ### [> Maia SDR
 
