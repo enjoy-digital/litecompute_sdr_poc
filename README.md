@@ -111,14 +111,14 @@ Execute the following:
 
 ## [> Cores
 
-For *Maia SDR* Modules, configurations/parameters are used at build time to produce the Verilog file. It's not possible
-to changes it at run time.
-
 ### [> MaiaSDRFFT
 
 This Module is a wrapper for the [FFT](https://github.com/maia-sdr/maia-sdr/blob/main/maia-hdl/maia_hdl/fft.py)
 
-Example usage:
+For this *Maia SDR* Modules, configurations/parameters are set at build time to
+produce the Verilog file. It's not possible to changes it at run time.
+
+**Example usage:**
 
 ```python
 # MAIA SDR FFT -----------------------------------------------------------------------------
