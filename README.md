@@ -114,7 +114,7 @@ Execute the following:
 For *Maia SDR* Modules, configurations/parameters are used at build time to produce the Verilog file. It's not possible
 to changes it at run time.
 
-### [> MaiaHDLFFT
+### [> MaiaSDRFFT
 
 This Module is a wrapper for the [FFT](https://github.com/maia-sdr/maia-sdr/blob/main/maia-hdl/maia_hdl/fft.py)
 
@@ -142,7 +142,7 @@ Where:
 
 The module provides 2 streams interface:
 - `sink` to receive samples. data are filled with `re` and `im`  with a size == `data_width`. `ready` is always set to `1`
-- `source` to propagates results with two subsignals `re` and `im` (size == `instance.out_width * 2`), `last` is set with the last sample of an FFT.
+- `source` to propagates results with two subsignals `re` and `im` (size == `instance.out_width`), `last` is set with the last sample of an FFT.
 
 **Note:**
 when windowing support is enabled or `cmult3x` option is set to true, to extra
@@ -160,16 +160,29 @@ With `clk_domain` the value provided to `clk_domain` parameter
 **Connection example:**
 
 ```python
-self.tx_conv = stream.Converter(64, 32)
-self.rx_conv = stream.Converter(32 64)
+# 64bit -> 32bit before FFT.
+self.pre_conv  = stream.Converter(64, 32)
+# 64bit -> 32bit after FFT.
+self.post_conv = stream.Converter(32, 64)
 
-self.pipeline = stream.Pipeline(
-    self.pcie_dma0.source,
-    self.tx_conv,
-    self.fft,
-    self.rx_conv,
-    self.pcie_dma0.sink,
-)
+self.comb += [
+  # PCIe DMA0 source -> Converter
+  self.pcie_dma0.source.connect(self.pre_conv.sink),
+
+  # Converter -> FFT
+  self.pre_conv.source.connect(self.fft.sink, omit["data"]),
+  # Split Converter source data to RE/IM.
+  self.fft.sink.re.eq(self.pre_conv.source.data[ 0:16]),
+  self.fft.sink.im.eq(self.pre_conv.source.data[16:32]),
+
+  # FFT -> Converter.
+  self.fft.source.connect(self.post_conv.sink, omit=["re", "im"]),
+  # Merge RE/IM in Converter sink data.
+  self.post_conv.sink.data.eq(Cat(self.fft.source.re, self.fft.source.im)),
+
+  # Convert DMA0 sink.
+  self.post_conv.source.connect(self.pcie_dma0.sink),
+]
 ```
 
 ## (> Simulation
