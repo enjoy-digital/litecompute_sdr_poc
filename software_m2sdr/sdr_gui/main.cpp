@@ -865,11 +865,11 @@ static void update_fir_configuration(const char *filename, uint32_t decimation,
 {
     int fd = open(fft_device_name, O_RDWR);
     /* write decimation. */
-    litepcie_writel(fd, CSR_FIR_DECIMATION_ADDR, decimation);
+    litepcie_writel(fd, CSR_SDR_PROCESSING_FIR_DECIMATION_ADDR, decimation);
     /* write operations (Minus one). */
-    litepcie_writel(fd, CSR_FIR_OPERATIONS_MINUS_ONE_ADDR, operations - 1);
+    litepcie_writel(fd, CSR_SDR_PROCESSING_FIR_OPERATIONS_MINUS_ONE_ADDR, operations - 1);
     /* write odd/event operations. */
-    litepcie_writel(fd, CSR_FIR_CFG_ADDR, (is_odd & 0x01) << CSR_FIR_CFG_ODD_OPERATIONS_OFFSET);
+    litepcie_writel(fd, CSR_SDR_PROCESSING_FIR_CFG_ADDR, (is_odd & 0x01) << CSR_SDR_PROCESSING_FIR_CFG_ODD_OPERATIONS_OFFSET);
     close(fd);
 }
 
@@ -930,8 +930,8 @@ static void load_fir_coefficients(const char *filename, float fs, float fc,
 
     /* Write coefficients */
     for (int i = 0; i < coeffs_file_len; i++) {
-        litepcie_writel(fd, CSR_FIR_COEFF_WADDR_ADDR, i);
-        litepcie_writel(fd, CSR_FIR_COEFF_WDATA_ADDR, coeffs[i]);
+        litepcie_writel(fd, CSR_SDR_PROCESSING_FIR_COEFF_WADDR_ADDR, i);
+        litepcie_writel(fd, CSR_SDR_PROCESSING_FIR_COEFF_WDATA_ADDR, coeffs[i]);
     }
 
     fclose(fd_coefficients);
@@ -960,11 +960,13 @@ void ShowM2SDRFIRCtrlPanel()
     if (enable_fir !=  g_enable_fir) {
         g_enable_fir = enable_fir;
         int fd = open(fft_device_name, O_RDWR);
-        uint32_t value = litepcie_readl(fd, CSR_MAIN_FFT_FIR_CFG_ADDR);
-        value &= ~(1 << CSR_MAIN_FFT_FIR_CFG_FIR_OFFSET);
+        uint32_t value = litepcie_readl(fd, CSR_SDR_PROCESSING_CONFIGURATION_ADDR);
+        value &= ~(1 << CSR_SDR_PROCESSING_CONFIGURATION_FIR_OFFSET);
+        value |= (1 << CSR_SDR_PROCESSING_CONFIGURATION_FFT_OFFSET);
+        value &= ~(1 << CSR_SDR_PROCESSING_CONFIGURATION_LITEDRAM_FIFO_OFFSET);
         if (g_enable_fir)
-            value |= (1 << CSR_MAIN_FFT_FIR_CFG_FIR_OFFSET);
-        litepcie_writel(fd, CSR_MAIN_FFT_FIR_CFG_ADDR, value);
+            value |= (1 << CSR_SDR_PROCESSING_CONFIGURATION_FIR_OFFSET);
+        litepcie_writel(fd, CSR_SDR_PROCESSING_CONFIGURATION_ADDR, value);
         close(fd);
     }
 
@@ -972,7 +974,7 @@ void ShowM2SDRFIRCtrlPanel()
     ImGui::Separator();
     ImGui::Text("Overflow Status:");
     int fd = open(fft_device_name, O_RDONLY);
-    int status = litepcie_readl(fd, CSR_MAIN_FIR_STATUS_ADDR) & 0x01;
+    int status = litepcie_readl(fd, CSR_SDR_PROCESSING_FIR_STATUS_ADDR) & 0x01;
     close(fd);
     ImGui::SameLine();
     ImGui::SetNextItemWidth(40.0f);
