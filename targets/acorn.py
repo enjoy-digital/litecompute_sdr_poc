@@ -37,8 +37,7 @@ from liteeth.phy.a7_gtp import QPLLSettings, QPLL
 
 from litescope import LiteScopeAnalyzer
 
-from gateware.maia_sdr_fft import MaiaSDRFFT
-from gateware.maia_sdr_fir import MaiaSDRFIR
+from gateware.sdr_processing import SDRProcessing
 
 # CRG ----------------------------------------------------------------------------------------------
 
@@ -152,124 +151,59 @@ class BaseSoC(SoCCore):
             )
             self.pcie_phy.use_external_qpll(qpll_channel=qpll.channels[0])
 
-        # LiteDRAMFIFO -----------------------------------------------------------------------------
-        if with_litedram_fifo:
-            self.fifo_dsp = fifo_dsp = LiteDRAMFIFO(
-                data_width = 64,
-                base       = 0x00000000,
-                depth      = 0x01000000, # 16MB
-                write_port = self.sdram.crossbar.get_port(mode="write"),
-                read_port  = self.sdram.crossbar.get_port(mode="read"),
-                with_bypass= True
-            )
-
-        # MAIA SDR FIR -----------------------------------------------------------------------------
-        self.fir = fir = MaiaSDRFIR(platform,
-            data_in_width  = 16,
-            data_out_width = 16,
-            coeff_width    = 18,
-            decim_width    = 7,
-            oper_width     = 7,
-            macc_trunc     = 0,
-            len_log2       = 8,
-            clk_domain     = "sys",
-            with_csr       = True,
-        )
-
-        # MAIA SDR FFT -----------------------------------------------------------------------------
-        self.fft = MaiaSDRFFT(platform,
-            data_width  = 16,
-            order_log2  = fft_order_log2,
-            radix       = fft_radix,
-            window      = {True: "blackmanharris", False: None}[with_fft_window],
-            cmult3x     = False,
-            clk_domain  = "sys",
-        )
-
-        # CSR/Configuration ------------------------------------------------------------------------
-
-        self._configuration = CSRStorage(description="Stream Configuration.", fields=[
-            CSRField("fir", size=1, offset=0, values=[
-                ("``0b0``", "Disable FIR Filter."),
-                ("``0b1``", "Enable  FIR Filter."),
-            ], reset = 0b1),
-            CSRField("fft", size=1, offset=1, values=[
-                ("``0b0``", "Disable FFT."),
-                ("``0b1``", "Enable  FFT."),
-            ], reset = 0b1),
-            CSRField("litedram_fifo", size=1, offset=2, values=[
-                ("``0b0``", "Disable LiteDRAMFIFO."),
-                ("``0b1``", "Enable  LiteDRAMFIFO."),
-            ], reset = 0b1),
-        ])
-
-        # TX/RX Datapath ---------------------------------------------------------------------------
-
-        ep0 = stream.Endpoint([("re", 16), ("im", 16)])
-        ep1 = stream.Endpoint([("re", 16), ("im", 16)])
-        ep2 = stream.Endpoint([("re", 16), ("im", 16)])
-
-        # PCIe [-> LiteDRAMFIFO] -> MaiaHDLFIR -> MaiaHDLFFT -> PCie.
-        # -----------------------------------------------------------
-
-        # FIXME: FFT output size is not always == input size
-        self.tx_conv = ResetInserter()(stream.Converter(64, 32))
-        self.rx_conv = ResetInserter()(stream.Converter(32, 64))
+        # DMA Converters ---------------------------------------------------------------------------
+        self.pre_conv  = ResetInserter()(stream.Converter(64, 32))
+        self.post_conv = ResetInserter()(stream.Converter(32, 64))
 
         self.comb += [
-            # PCIe DMA0 Source -> Converter sink.
-            self.pcie_dma0.source.connect(self.tx_conv.sink),
+            self.pcie_dma0.source.connect(self.pre_conv.sink),
+            self.pre_conv.reset.eq(~self.pcie_dma0.writer.enable),
 
-            # Converter -> EP0 (Default / Bypass LiteDRAM).
-            self.tx_conv.source.connect(ep0, omit=["data"]),
-            ep0.re.eq(self.tx_conv.source.data[ 0:16]),
-            ep0.im.eq(self.tx_conv.source.data[16:32]),
+            self.post_conv.source.connect(self.pcie_dma0.sink),
+            self.post_conv.reset.eq(~self.pcie_dma0.writer.enable),
         ]
 
-        if with_litedram_fifo:
-            self.comb += [
-                If(self._configuration.fields.litedram_fifo,
-                    # Converter Source -> LiteDRAMFIFO sink.
-                    self.tx_conv.source.connect(fifo_dsp.sink),
+        # SDR Processing ---------------------------------------------------------------------------
+        self.sdr_processing = sdr_processing = SDRProcessing(platform, self,
+            # LiteDRAMFIFO.
+            with_litedram      = with_litedram_fifo,
+            dram_data_width    = 32,
+            dram_base          = 0x00000000,
+            dram_depth         = 0x01000000, # 16MB
+            dram_write_port    = self.sdram.crossbar.get_port(mode="write"),
+            dram_read_port     = self.sdram.crossbar.get_port(mode="read"),
 
-                    # LiteDRAMFIFO source -> EP0.
-                    self.fifo_dsp.source.connect(ep0, omit=["data"]),
-                    ep0.re.eq(self.fifo_dsp.source.data[ 0:16]),
-                    ep0.im.eq(self.fifo_dsp.source.data[16:32]),
-                ),
-            ]
-
-        self.comb += [
             # FIR.
-            If(self._configuration.fields.fir,
-                # EP0 -> FIR -> EP1.
-                ep0.connect(self.fir.sink),
-                self.fir.source.connect(ep1),
-            ).Else( # EP0 -> EP1.
-                ep0.connect(ep1),
-            ),
+            with_fir           = True,
+            fir_data_in_width  = 16,
+            fir_data_out_width = 16,
+            fir_coeff_width    = 18,
+            fir_decim_width    = 7,
+            fir_oper_width     = 7,
+            fir_macc_trunc     = 0,
+            fir_len_log2       = 8,
+            fir_clk_domain     = "sys",
+            fir_with_csr       = True,
 
             # FFT.
-            If(self._configuration.fields.fft,
-                # EP1 -> FFT.
-                ep1.connect(self.fft.sink),
-                # FFT -> EP2.
-                self.fft.source.connect(ep2),
-            ).Else( # EP1 -> EP2.
-                ep1.connect(ep2),
-            ),
+            with_fft           = True,
+            fft_data_width     = 16,
+            fft_order_log2     = fft_order_log2,
+            fft_radix          = fft_radix,
+            fft_window         = with_fft_window,
+            fft_cmult3x        = False,
+            fft_clk_domain     = "sys",
+        )
 
-            # EP2 -> Converter.
-            ep2.connect(self.rx_conv.sink, omit=["re", "im"]),
-            self.rx_conv.sink.data.eq(Cat(ep2.re, ep2.im)),
+        self.comb += [
+            # Converter -> SDR Processing Sink.
+            self.pre_conv.source.connect(sdr_processing.sink),
 
-            # Converter -> DMA0 Sink.
-            self.rx_conv.source.connect(self.pcie_dma0.sink, omit=["first", "last"]),
+            # SDR Processing Source -> DMA0 Sink.
+            sdr_processing.source.connect(self.post_conv.sink, omit=["first", "last"]),
 
-            # Disables/clear FFT when no stream.
-            self.fft.reset.eq(~self.pcie_dma0.writer.enable),
-            self.tx_conv.reset.eq(~self.pcie_dma0.writer.enable),
-            self.rx_conv.reset.eq(~self.pcie_dma0.writer.enable),
+            # SDR Processing Reset.
+            sdr_processing.reset.eq(~self.pcie_dma0.writer.enable),
         ]
 
         # Leds -------------------------------------------------------------------------------------
