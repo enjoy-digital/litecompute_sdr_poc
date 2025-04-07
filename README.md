@@ -185,6 +185,82 @@ self.comb += [
 ]
 ```
 
+### [> MaiaSDRFIR
+
+This Module is a wrapper for the [FIR](https://github.com/maia-sdr/maia-sdr/blob/main/maia-hdl/maia_hdl/fir.py)
+
+Example usage:
+
+```python
+self.fir = fir   = MaiaSDRFIR(platform,
+  data_in_width  = 16,
+  data_out_width = 16,
+  coeff_width    = 18,
+  decim_width    = 7,
+  oper_width     = 7,
+  macc_trunc     = macc_trunc,
+  len_log2       = 8,
+  with_csr       = True,
+)
+```
+
+Where:
+- `data_in_width` Size of Real/Imag input signals
+- `data_out_width` Size of Real/Imag output signals
+- `coeff_width` Size of Coefficients
+- `decim_width` Size of the decimation register
+- `oper_width` Size of the operations register
+- `macc_trunc` Truncation length for output of each MACC.
+- `len_log2` Coefficients RAM maximum capacity
+- `with_csr` to add CSR for each dynamic parameters configuration
+
+The module provides 2 streams interface:
+- `sink` to receive samples. data are filled with `re` and `im`  with a size == `data_in_width`.
+- `source` to propagates results with two subsignals `re` and `im` (size == `data_out_width`).
+
+**Notes:**
+
+- The `operations` signal or CSR, defines both the number of multiplications
+  to perform and the length of the coefficient table ($2 * operations$). It also
+  determines the input sample rate: for each new complex sample, `operations`
+  clock cycles are required before the next sample can be processed.
+- The `macc_trunc` signal or CSR must be configured with care.
+  By definition, a FIR filter (or a MACC unit) requires an output width of
+  approximately
+  $data\_in\_width \times coeff\_width \times \log_2(operations \times 2)$.
+  If the output width or internal accumulator is too small, the results may
+  become corrupted.
+  However, this theoretical value is often an overestimate and depends on
+  factors such as the coefficient lookup table (LUT) and the input sample range.
+
+**Connection example:**
+
+```python
+# 64bit -> 32bit before FIR.
+self.pre_conv  = stream.Converter(64, 32)
+# 64bit -> 32bit after FIR.
+self.post_conv = stream.Converter(32, 64)
+
+self.comb += [
+  # PCIe DMA0 source -> Converter
+  self.pcie_dma0.source.connect(self.pre_conv.sink),
+
+  # Converter -> FIR
+  self.pre_conv.source.connect(self.fir.sink, omit["data"]),
+  # Split Converter source data to RE/IM.
+  self.fir.sink.re.eq(self.pre_conv.source.data[ 0:16]),
+  self.fir.sink.im.eq(self.pre_conv.source.data[16:32]),
+
+  # FIR -> Converter.
+  self.fir.source.connect(self.post_conv.sink, omit=["re", "im"]),
+  # Merge RE/IM in Converter sink data.
+  self.post_conv.sink.data.eq(Cat(self.fir.source.re, self.fir.source.im)),
+
+  # Convert DMA0 sink.
+  self.post_conv.source.connect(self.pcie_dma0.sink),
+]
+```
+
 ## (> Simulation
 ----------------
 
