@@ -13,13 +13,13 @@ import argparse
 
 from migen import *
 
-sys.path.append("../litex_m2sdr")
-
 from litex.gen import *
 from litex.gen.genlib.cdc import BusSynchronizer
 
+#sys.path.append("../litex_m2sdr")
+
 from litex.build.generic_platform import Subsignal, Pins
-from litex_m2sdr_platform import Platform
+from litex_m2sdr.litex_m2sdr_platform import Platform
 
 from litex.soc.interconnect.csr import *
 from litex.soc.interconnect     import stream
@@ -48,16 +48,16 @@ from litesata.phy import LiteSATAPHY
 
 from litescope import LiteScopeAnalyzer
 
-from gateware.si5351      import SI5351
-from gateware.si5351_i2c  import SI5351I2C, i2c_program_si5351
-from gateware.ad9361.core import AD9361RFIC
-from gateware.qpll        import SharedQPLL
-from gateware.time        import TimeGenerator
-from gateware.pps         import PPSGenerator
-from gateware.header      import TXRXHeader
-from gateware.measurement import MultiClkMeasurement
+from litex_m2sdr.gateware.si5351      import SI5351
+from litex_m2sdr.gateware.si5351_i2c  import SI5351I2C, i2c_program_si5351
+from litex_m2sdr.gateware.ad9361.core import AD9361RFIC
+from litex_m2sdr.gateware.qpll        import SharedQPLL
+from litex_m2sdr.gateware.time        import TimeGenerator
+from litex_m2sdr.gateware.pps         import PPSGenerator
+from litex_m2sdr.gateware.header      import TXRXHeader
+from litex_m2sdr.gateware.measurement import MultiClkMeasurement
 
-from software import generate_litepcie_software
+from litex_m2sdr.software import generate_litepcie_software
 
 from gateware.maia_sdr_fft import MaiaSDRFFT
 from gateware.maia_sdr_fir import MaiaSDRFIR
@@ -679,6 +679,7 @@ def main():
     parser = argparse.ArgumentParser(description="LiteX SoC on LiteX-M2SDR.", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     # Build/Load/Utilities.
     parser.add_argument("--variant",         default="m2",        help="Design variant.", choices=["m2", "baseboard"])
+    parser.add_argument("--reset",           action="store_true", help="Reset the device.")
     parser.add_argument("--build",           action="store_true", help="Build bitstream.")
     parser.add_argument("--load",            action="store_true", help="Load bitstream.")
     parser.add_argument("--flash",           action="store_true", help="Flash bitstream.")
@@ -776,6 +777,11 @@ def main():
 
     # Generate LitePCIe Driver.
     generate_litepcie_software(soc, "software_m2sdr", use_litepcie_software=args.driver)
+
+    # Reset Device.
+    if args.reset:
+        prog = soc.platform.create_programmer()
+        prog.reset()
 
     # Load Bistream.
     if args.load:
