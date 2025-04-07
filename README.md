@@ -14,12 +14,19 @@ Example of FPGA based PCIe accelerator infrastructure with LiteX and its cores.
 ### [> Demonstrations
 
 This repository provides two demonstrations:
-1. The first is based on *SQRL Acorn CLE-215+* (`targets/acorn.py`): it demonstrates the use of the `MaiSDRFFT` integration between
-   `reader` and `writer` DMA channel 0. It act as loopback.
-2. The second is based on *LiteX M2SDR* target (`targets/litex_m2sdr.py`: in this demonstration, the `MaiaSDRFFT` is connected between RFIC and
+1. The second is based on *LiteX M2SDR* target (`targets/litex_m2sdr.py`: in this demonstration, the `MaiaSDRFFT` is connected between RFIC and
    a second DMA Channel. The FFT may be fed with RFIC output (RX side) or set in loopback mode.
 
 **Acorn demonstration**
+
+This demonstration targets the *SQRL Acorn CLE-215+* platform (`targets/acorn.py`).
+It implements a DMA loopback pipeline with the following data path:
+DMA Reader [-> LiteDRAM FIFO] -> FIR -> FFT -> DMA Writer
+
+The `LiteDRAM` module is optional and must be enabled at build time.
+All processing modules can be dynamically bypassed at runtime using
+*software/user/litepcie_fir* (for more details, see *software/user/README.md*).
+
 ```bash
 python3 -m targets.acorn --build [--load] [--flash] [--with-fft-window] [--fft-radix 2/4] [--fft-order-log2 x] [--with-litedram-fifo]
 ```
@@ -29,7 +36,8 @@ With:
 * `--with-fft-window` enables windowing.
 * `--fft-radix` selects between radix 2 and radix 4 (default: 2)
 * `--fft-order-log2` sets the log2 of the FFT size (default: 5)
-* `--with-litedram-fifo` enable integration of the DRAM between DMA reader and DMA writer
+* `--with-litedram-fifo` enable integration of the DRAM between DMA reader and
+  DMA writer
 
 **LiteX M2SDR**
 ```bash
