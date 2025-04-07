@@ -25,8 +25,18 @@ DMA Reader [-> LiteDRAM FIFO] -> FIR -> FFT -> DMA Writer
 
 The `LiteDRAM` module is optional and must be enabled at build time.
 All processing modules can be dynamically bypassed at runtime using
-*software/user/litepcie_fir* (for more details, see *software/user/README.md*).
+*software/user/litepcie_util* (for more details, see *software/user/README.md*).
+The command is:
 
+```bash
+litepcie_util [-f 0/1] [-i 0/1] [-l 0/1] stream_configuration
+```
+With:
+- `-f` to enable/disable the FFT (default: 1).
+- `-i` to enable/disable the FIR filter (default: 1).
+- `-l` to enable/disable the LiteDRAMFIFO Module (default: 1).
+
+To build the bitstream the command is:
 ```bash
 python3 -m targets.acorn --build [--load] [--flash] [--with-fft-window] [--fft-radix 2/4] [--fft-order-log2 x] [--with-litedram-fifo]
 ```
