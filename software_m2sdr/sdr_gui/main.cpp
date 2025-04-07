@@ -319,35 +319,8 @@ void ShowM2SDRRFPanel()
 }
 
 // -----------------------------------------------------------------------------
-// 4) Large Buffers for FFT
+// 4) KISS FFT, FFTShift, axis-plot
 // -----------------------------------------------------------------------------
-static const int MAX_FFT_SAMPLES = 1 << 20;
-//static float g_i_data[MAX_FFT_SAMPLES];
-//static float g_q_data[MAX_FFT_SAMPLES];
-//static float g_fft_data[MAX_FFT_SAMPLES];
-
-// -----------------------------------------------------------------------------
-// 5) Preconfigured FFT sizes
-// -----------------------------------------------------------------------------
-static const int s_fft_lengths[] = {
-    128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768,
-    65536, 131072, 262144, 524288, 1048576
-};
-static const int s_num_fft_lengths = (int)(sizeof(s_fft_lengths) / sizeof(s_fft_lengths[0]));
-static int g_fft_length_index = 3; // default = 1024
-
-static int GetFFTLength()
-{
-    return s_fft_lengths[g_fft_length_index];
-}
-
-// -----------------------------------------------------------------------------
-// 6) Fake wave generation, KISS FFT, axis-plot
-// -----------------------------------------------------------------------------
-static float g_fake_freq_hz = 1e3;   
-static float g_fake_amp     = 0.5f;
-static float g_time_offset  = 0.0f;
-
 static kiss_fft_cfg g_kiss_cfg = NULL;
 static int g_kiss_n = 0;
 
@@ -413,29 +386,6 @@ void fftshift(float* data, int length) {
     delete[] temp;
 }
 
-static const float FIXED_PHASE_RAD = 3.1415926535f / 2.0f;
-
-static void GenerateFakeIQ(float freq_hz, float amplitude, float time_offset, int n)
-{
-    (void)freq_hz;
-    (void)amplitude;
-    (void)time_offset;
-    (void)n;
-    //const float sample_rate = 1e6f;
-    //if (n > MAX_FFT_SAMPLES) n = MAX_FFT_SAMPLES;
-
-    //for (int i = 0; i < n; i++) {
-    //    float t = (float)i / sample_rate;
-    //    t += time_offset;
-    //    //g_i_data[i] = amplitude * sinf(2.0f * 3.1415926535f * freq_hz * t);
-    //    //g_q_data[i] = amplitude * sinf(2.0f * 3.1415926535f * freq_hz * t + FIXED_PHASE_RAD);
-    //}
-    //for (int i = n; i < MAX_FFT_SAMPLES; i++) {
-    //    //g_i_data[i] = 0.0f;
-    //    //g_q_data[i] = 0.0f;
-    //}
-}
-
 // Minimal axis-drawing function for a 2D line plot in ImGui.
 static void PlotLinesWithAxis(const char* label,
                               const float* data, int count,
@@ -483,7 +433,7 @@ static void PlotLinesWithAxis(const char* label,
 }
 
 // -----------------------------------------------------------------------------
-// 7) Waterfall Implementation
+// 5) Waterfall Implementation
 // -----------------------------------------------------------------------------
 #define WATERFALL_WIDTH 1024
 #define WATERFALL_HEIGHT 256
@@ -764,10 +714,8 @@ void rawIQThread()
         std::ref(raw_i_buffer), std::ref(raw_q_buffer));
 }
 // -----------------------------------------------------------------------------
-// 8) Master Plot Panel
+// 6) Master Plot Panel
 // -----------------------------------------------------------------------------
-static bool g_enable_fake_gen = false;
-static bool g_animate_wave   = false;
 
 static int  g_raw_waterfall_framecount = 0;
 void ShowM2SDRRawIQPlotPanel()
