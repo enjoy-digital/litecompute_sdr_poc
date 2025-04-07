@@ -109,14 +109,6 @@ class SDRProcessing(LiteXModule):
             )
             self.fft.add_constants(soc)
 
-            # Window Clocking.
-            # ----------------
-            if fft_window:
-                self.cd_sys2x = ClockDomain()
-
-                # FIXME: can't be here
-                soc.crg.pll.create_clkout(self.cd_sys2x, soc.sys_clk_freq * 2)
-
             # MAIA SDR FFT Logic.
             # -------------------
             # Disables/clear FFT when no stream.
@@ -178,7 +170,7 @@ class SDRProcessing(LiteXModule):
 
             # ep2 -> Converter.
             ep2.connect(source, omit=["re", "im"]),
-            self.source.data.eq(Cat(ep2.re, ep2.im)),
+            source.data.eq(Cat(ep2.re, ep2.im)),
         ]
 
         # LiteDRAM Integration.
