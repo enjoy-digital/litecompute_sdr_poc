@@ -16,8 +16,6 @@ from migen import *
 from litex.gen import *
 from litex.gen.genlib.cdc import BusSynchronizer
 
-#sys.path.append("../litex_m2sdr")
-
 from litex.build.generic_platform import Subsignal, Pins
 from litex_m2sdr.litex_m2sdr_platform import Platform
 
@@ -59,13 +57,12 @@ from litex_m2sdr.gateware.measurement import MultiClkMeasurement
 
 from litex_m2sdr.software import generate_litepcie_software
 
-from gateware.maia_sdr_fft import MaiaSDRFFT
-from gateware.maia_sdr_fir import MaiaSDRFIR
+from gateware.sdr_processing import SDRProcessing
 
 # CRG ----------------------------------------------------------------------------------------------
 
 class CRG(LiteXModule):
-    def __init__(self, platform, sys_clk_freq, with_eth=False, with_sata=False):
+    def __init__(self, platform, sys_clk_freq, with_eth=False, with_sata=False, with_fft=False):
         self.rst            = Signal()
         self.cd_sys         = ClockDomain()
         self.cd_clk10       = ClockDomain()
@@ -73,6 +70,9 @@ class CRG(LiteXModule):
         self.cd_refclk_pcie = ClockDomain()
         self.cd_refclk_eth  = ClockDomain()
         self.cd_refclk_sata = ClockDomain()
+
+        if with_fft:
+            self.cd_sys2x = ClockDomain()
 
         # # #
 
@@ -101,6 +101,10 @@ class CRG(LiteXModule):
             self.sata_pll = sata_pll = S7PLL()
             sata_pll.register_clkin(self.cd_sys.clk, sys_clk_freq)
             sata_pll.create_clkout(self.cd_refclk_sata, 150e6, margin=0)
+
+        # MAIA FFT.
+        if with_fft:
+            pll.create_clkout(self.cd_sys2x, 2 * sys_clk_freq)
 
 # BaseSoC ------------------------------------------------------------------------------------------
 
@@ -178,6 +182,7 @@ class BaseSoC(SoCMini):
         self.crg = CRG(platform, sys_clk_freq,
             with_eth  = with_eth,
             with_sata = with_sata,
+            with_fft  = with_fft_window,
         )
 
         # Shared QPLL.
@@ -431,16 +436,6 @@ class BaseSoC(SoCMini):
         if with_sata:
             pass # TODO.
 
-        # FIR/FFT Raw Channel
-        if with_fft or with_fir:
-            # AD9361 -> DMA1.
-            # ---------------
-            self.comb += [
-                self.ad9361.source.connect(self.pcie_dma1.sink, omit=["ready"]),
-                # Disable DMA1 synchronizer.
-                self.pcie_dma1.synchronizer.pps.eq(1),
-            ]
-
         # Timing Constraints/False Paths -----------------------------------------------------------
 
         platform.add_false_path_constraints(
@@ -478,129 +473,59 @@ class BaseSoC(SoCMini):
             "clk4" : si5351_clk1,
         })
 
-        # MAIA SDR DSP -----------------------------------------------------------------------------
-
-        # SDR DSP Generals CSR (FIR enable/disable (bypass)).
-        # ---------------------------------------------------
-        if with_fft and with_fir:
-            self._fft_fir_cfg = CSRStorage(description="Stream Configuration.", fields=[
-                CSRField("fir", size=1, offset=0, values=[
-                    ("``0b0``", "Disable FIR Filter."),
-                    ("``0b1``", "Enable  FIR Filter."),
-                ], reset = 0b1),
-                CSRField("fft", size=1, offset=1, values=[
-                    ("``0b0``", "Disable FFT."),
-                    ("``0b1``", "Enable  FFT."),
-                ], reset = 0b1),
-            ])
-
-        # MAIA SDR FFT.
-        # -------------
-        if with_fft:
-            self.fft = MaiaSDRFFT(platform,
-                data_width  = 16,
-                order_log2  = fft_order_log2,
-                radix       = fft_radix,
-                window      = {True: "blackmanharris", False: None}[with_fft_window],
-                cmult3x     = False,
-                clk_domain  = "sys",
-            )
-            self.fft.add_constants(self)
-
-            # Window Clocking.
-            # ----------------
-            if with_fft_window:
-                self.cd_sys2x = ClockDomain()
-
-                self.crg.pll.create_clkout(self.cd_sys2x, sys_clk_freq * 2)
-
-        # MAIA SDR FIR.
-        # -------------
-        if with_fir:
-            # MAIA SDR FIR Status.
-            #---------------------
-            self._fir_status = CSRStatus(description="FIR Status", fields=[
-                CSRField("overflow", size=1, offset=0),
-            ])
-
-            # FIFO to check overflow.
-            fir_fifo_ready_d = Signal()
-            self.fir_fifo    = ResetInserter()(stream.SyncFIFO([("data", 32)], 16))
-            self.fir = fir   = MaiaSDRFIR(platform,
-                data_in_width  = 16,
-                data_out_width = 16,
-                coeff_width    = 18,
-                decim_width    = 7,
-                oper_width     = 7,
-                macc_trunc     = macc_trunc,
-                len_log2       = 8,
-                clk_domain     = "sys",
-                with_csr       = True,
-            )
-
-            # MAIA SDR FIR Logic.
-            # -------------------
-            # Store ready -> not ready for FIR FIFO (means FIR is too slow).
-            self.sync += [
-                fir_fifo_ready_d.eq(self.fir_fifo.sink.ready),
-                If(~self.pcie_dma2.writer.enable,
-                    self._fir_status.fields.overflow.eq(0),
-                ).Elif(~self.fir_fifo.sink.ready & fir_fifo_ready_d,
-                    self._fir_status.fields.overflow.eq(1),
-                )
-            ]
-
-
-        # RFIC -> FIFO -> [MaiaSDRFIR] -> MaiaSDRFFT -> PCIe.
-        # ---------------------------------------------------
-
-        if with_fft:
-            # FIXME: FFT output size is not always == input size
-            self.rx_conv  = ResetInserter()(stream.Converter(32, 64))
-
-            # Default: AD9361 -> FFT
+        # Raw Channel (DMA1 / sdr_gui) -------------------------------------------------------------
+        if with_fft or with_fir:
+            # AD9361 -> DMA1.
+            # ---------------
             self.comb += [
-                self.ad9361.source.connect(self.fft.sink, omit=["ready", "data"]),
-                self.ad9361.source.ready.eq(self.header.rx.sink.ready),
-                self.fft.sink.re.eq(self.ad9361.source.data[ 0:16]), # Only keep first channel (testmode)
-                self.fft.sink.im.eq(self.ad9361.source.data[16:32]), # Only keep first channel (testmode)
+                self.ad9361.source.connect(self.pcie_dma1.sink, omit=["ready"]),
+                # Disable DMA1 synchronizer.
+                self.pcie_dma1.synchronizer.pps.eq(1),
             ]
 
-            # FIR: according to Configuration CSR
-            if with_fir:
-                self.comb += [
-                    # RFIC -> FFT or FIR.
-                    If(self._fft_fir_cfg.fields.fir,
-                        # RFIC -> FIR.
-                        self.ad9361.source.connect(self.fir_fifo.sink, omit=["ready", "data"]),
-                        self.fir_fifo.sink.data.eq(self.ad9361.source.data[:32]),
-                        # FIR -> FFT.
-                        self.fir.source.connect(self.fft.sink),
-                    ),
-                    # FIFO -> FIR.
-                    self.fir_fifo.source.connect(self.fir.sink, omit=["data"]),
-                    self.fir.sink.re.eq(self.fir_fifo.source.data[ 0:16]),
-                    self.fir.sink.im.eq(self.fir_fifo.source.data[16:32]),
-                    self.fir_fifo.reset.eq(~self.pcie_dma2.writer.enable),
-                ]
+        # DMA Converter ----------------------------------------------------------------------------
+        self.post_conv = ResetInserter()(stream.Converter(32, 64))
+        self.comb += self.post_conv.reset.eq(~self.pcie_dma2.writer.enable)
 
-            # Default: FFT -> RX_CONV -> PCIe.
-            # --------------------------------
-            self.comb += [
-                # FFT -> Converter.
-                self.fft.source.connect(self.rx_conv.sink, omit=["re", "im"]),
-                self.rx_conv.sink.data.eq(Cat(self.fft.source.re, self.fft.source.im)),
+        # SDR Processing ---------------------------------------------------------------------------
+        self.sdr_processing = sdr_processing = SDRProcessing(platform, self,
+            # FIR.
+            with_fir           = with_fir,
+            fir_data_in_width  = 16,
+            fir_data_out_width = 16,
+            fir_coeff_width    = 18,
+            fir_decim_width    = 7,
+            fir_oper_width     = 7,
+            fir_macc_trunc     = macc_trunc,
+            fir_len_log2       = 8,
+            fir_clk_domain     = "sys",
+            fir_with_csr       = True,
 
-                # Converter -> PCIe DMA2 Source.
-                self.rx_conv.source.connect(self.pcie_dma2.sink, omit=["first", "last"]),
+            # FFT.
+            with_fft           = with_fft,
+            fft_data_width     = 16,
+            fft_order_log2     = fft_order_log2,
+            fft_radix          = fft_radix,
+            fft_window         = with_fft_window,
+            fft_cmult3x        = False,
+            fft_clk_domain     = "sys",
+        )
 
-                # Disable DMA2 synchronizer.
-                self.pcie_dma2.synchronizer.pps.eq(1),
+        self.comb += [
+            # AD9361 -> SDR Processing Sink.
+            self.ad9361.source.connect(sdr_processing.sink, omit=["ready", "data"]),
+            sdr_processing.sink.data.eq(self.ad9361.source.data[:32]), # only keep first Channel
 
-                # Disables/clear FFT when no stream.
-                self.fft.reset.eq(~self.pcie_dma2.writer.enable),
-                self.rx_conv.reset.eq(~self.pcie_dma2.writer.enable),
-            ]
+            # SDR Processing Source -> Converter -> DMA2 Sink.
+            sdr_processing.source.connect(self.post_conv.sink),
+            self.post_conv.source.connect(self.pcie_dma2.sink, omit=["first", "last"]),
+
+            # Disable DMA2 synchronizer.
+            self.pcie_dma2.synchronizer.pps.eq(1),
+
+            # SDR Processing Reset.
+            sdr_processing.reset.eq(~self.pcie_dma0.writer.enable),
+        ]
 
     # LiteScope Probes (Debug) ---------------------------------------------------------------------
 
