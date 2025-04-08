@@ -308,10 +308,13 @@ self.comb += [
 
 ### [> SDRProcessing
 
-*gateware/sdr_processing.py* provides a wrapper with:
+Located in *gateware/sdr_processing.py* combines:
 - a `LiteSDRAMFIFO` Module
 - a `MaiaSDRFIR` Module
 - a `MaiaSDRFFT` Module
+
+
+**Instanciation example**
 
 It may instiated with a code similar too:
 ```python
@@ -341,7 +344,23 @@ self.sdr_processing = sdr_processing = SDRProcessing(platform, self,
 )
 ```
 
-Most of attributes are similar to `MaiSDRFIR` and `MaiaSDRFFT`
+All attributes are similar to `MaiSDRFIR` and `MaiaSDRFFT` and are simply propagated to the dedicated Module
+
+**CSR for bypass**
+
+A `CSRStorage` module is present. It allows to enable/bypass each block independtly.
+
+**Interfaces**
+
+Two primary endpoints are present
+- `sink` with a data size of `2 * fir_data_in_width`. It receives stream from previous module
+- `source` with a data size of `2 * fft_data_widht`. It propagates results.
+
+Two additionals endpoints are also present when `with_litedram` is set to `True`:
+- `ext_fifo_source` with a data size of `2 * fir_data_in_width`. To be connected to the `LiteDRAMFIFO.sink`.
+- `ext_fifo_sink` with a data size of `2 * fir_data_in_width` To be connected to the `LiteDRAMFIFO.source`.
+
+A signal `reset` must be connected to reset/clear internal FIFO and to set FFT in its default state.
 
 ## (> Simulation
 ----------------
