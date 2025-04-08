@@ -19,7 +19,7 @@ external RFIC device and a DMA Channel.
 
 It also highligths:
 - `Amaranth` integration: both *FIR Filter* and *FFT* modules are written in the `Amaranth` HDL.
-- **Custom processing: Shows how to insert processing blocks into RX/TX datapaths.
+- **Custom processing**: Shows how to insert processing blocks into RX/TX datapaths.
 
 Both demonstrations (`acorn` and `litex_m2sdr`) uses the same `sdr_processing` to integrates
 SDR processing in the RX datapath.
@@ -33,6 +33,7 @@ This demonstration implements a DMA loopback pipeline with the following data pa
 `DMA Reader [-> LiteDRAM FIFO] -> FIR -> FFT -> DMA Writer`
 
 **Note**: `LiteDRAM` is optional and must be enabled at build time.
+
 Modules can be bypassed dynamically at runtime using `litepcie_util` with this command:
 ```bash
 litepcie_util [-f 0/1] [-i 0/1] [-l 0/1] stream_configuration
@@ -361,6 +362,44 @@ Two additionals endpoints are also present when `with_litedram` is set to `True`
 - `ext_fifo_sink` with a data size of `2 * fir_data_in_width` To be connected to the `LiteDRAMFIFO.source`.
 
 A signal `reset` must be connected to reset/clear internal FIFO and to set FFT in its default state.
+
+**Connection example:**
+
+```bash
+# LiteDRAM FIFO ----------------------------------------------------------------------------
+
+if with_litedram_fifo:
+    # Note: data_depth must be equal to sdr_processing sink
+    self.dram_fifo = dram_fifo = LiteDRAMFIFO(
+        data_width  = 32,
+        base        = 0x00000000,
+        depth       = 0x01000000, # 16MB
+        write_port  = self.sdram.crossbar.get_port(mode="write"),
+        read_port   = self.sdram.crossbar.get_port(mode="read"),
+        with_bypass = True,
+    )
+
+# SDR Processing ---------------------------------------------------------------------------
+
+self.sdr_processing = sdr_processing = SDRProcessing(platform, self,
+  [...]
+)
+
+self.comb += [
+  # Converter -> SDR Processing Sink.
+  self.pre_conv.source.connect(sdr_processing.sink),
+  # SDR Processing Source -> DMA0 Sink.
+  sdr_processing.source.connect(self.post_conv.sink, omit=["first", "last"]),
+  # SDR Processing Reset.
+  sdr_processing.reset.eq(~self.pcie_dma0.writer.enable),
+]
+# LiteDRAMFIFO specials endpoints
+if with_litedram_fifo:
+    self.comb += [
+        sdr_processing.ext_fifo_source.connect(dram_fifo.sink),
+        dram_fifo.source.connect(sdr_processing.ext_fifo_sink),
+    ]
+```
 
 ## (> Simulation
 ----------------
