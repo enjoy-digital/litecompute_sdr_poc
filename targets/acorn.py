@@ -151,7 +151,21 @@ class BaseSoC(SoCCore):
             )
             self.pcie_phy.use_external_qpll(qpll_channel=qpll.channels[0])
 
+        # LiteDRAM FIFO ----------------------------------------------------------------------------
+
+        if with_litedram_fifo:
+            # Note: data_depth must be equal to sdr_processing sink
+            self.dram_fifo = dram_fifo = LiteDRAMFIFO(
+                data_width  = 32,
+                base        = 0x00000000,
+                depth       = 0x01000000, # 16MB
+                write_port  = self.sdram.crossbar.get_port(mode="write"),
+                read_port   = self.sdram.crossbar.get_port(mode="read"),
+                with_bypass = True,
+            )
+
         # DMA Converters ---------------------------------------------------------------------------
+
         self.pre_conv  = ResetInserter()(stream.Converter(64, 32))
         self.post_conv = ResetInserter()(stream.Converter(32, 64))
 
@@ -164,14 +178,10 @@ class BaseSoC(SoCCore):
         ]
 
         # SDR Processing ---------------------------------------------------------------------------
+
         self.sdr_processing = sdr_processing = SDRProcessing(platform, self,
-            # LiteDRAMFIFO.
+            # External FIFO.
             with_litedram      = with_litedram_fifo,
-            dram_data_width    = 32,
-            dram_base          = 0x00000000,
-            dram_depth         = 0x01000000, # 16MB
-            dram_write_port    = self.sdram.crossbar.get_port(mode="write"),
-            dram_read_port     = self.sdram.crossbar.get_port(mode="read"),
 
             # FIR.
             with_fir           = True,
@@ -205,6 +215,13 @@ class BaseSoC(SoCCore):
             # SDR Processing Reset.
             sdr_processing.reset.eq(~self.pcie_dma0.writer.enable),
         ]
+
+        # LiteDRAMFIFO specials endpoints
+        if with_litedram_fifo:
+            self.comb += [
+                sdr_processing.ext_fifo_source.connect(dram_fifo.sink),
+                dram_fifo.source.connect(sdr_processing.ext_fifo_sink),
+            ]
 
         # Leds -------------------------------------------------------------------------------------
         if with_led_chaser:

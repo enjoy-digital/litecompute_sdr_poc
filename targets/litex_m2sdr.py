@@ -474,6 +474,7 @@ class BaseSoC(SoCMini):
         })
 
         # Raw Channel (DMA1 / sdr_gui) -------------------------------------------------------------
+
         if with_fft or with_fir:
             # AD9361 -> DMA1.
             # ---------------
@@ -484,10 +485,12 @@ class BaseSoC(SoCMini):
             ]
 
         # DMA Converter ----------------------------------------------------------------------------
+
         self.post_conv = ResetInserter()(stream.Converter(32, 64))
         self.comb += self.post_conv.reset.eq(~self.pcie_dma2.writer.enable)
 
         # SDR Processing ---------------------------------------------------------------------------
+
         self.sdr_processing = sdr_processing = SDRProcessing(platform, self,
             # FIR.
             with_fir           = with_fir,
