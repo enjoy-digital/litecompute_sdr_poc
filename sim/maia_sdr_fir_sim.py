@@ -156,16 +156,18 @@ class Platform(SimPlatform):
 # Sim ----------------------------------------------------------------------------------------------
 
 class SimSoC(SoCCore):
-    def __init__(self, sys_clk_freq=int(200e6), data_in_width=16, data_out_width=32,
+    def __init__(self, sys_clk_freq=int(200e6),
+        data_in_width         = 16,
+        data_out_width        = 16,
         stream_file           = None,
         operations            = 6,
-        odd_operations        = False,
-        macc_trunc            = 0,
+        odd_operations        = True,
+        macc_trunc            = 17,
         coeffs_width          = 18,
         len_log2              = 8,
         decimation            = 2,
         sample_rate           = 4e6,
-        cutoff_freq           = 1e6,
+        cutoff_freq           = 600e3,
         signal_freq           = 10e6,
         with_etherbone        = False,
         etherbone_mac_address = 0x10e2d5000001,
@@ -207,6 +209,7 @@ class SimSoC(SoCCore):
             "--operations", str(operations),
             "--decimation", str(decimation),
             "--num-coeffs", str(2**len_log2),
+            "--model",      "simple",
             {True: "--odd_operations", False: ""}[odd_operations],
         ]
         ret = subprocess.run(" ".join(cmd), shell=True)
@@ -276,7 +279,7 @@ class SimSoC(SoCCore):
         # Read or Create input samples dataset.
         # -------------------------------------
         if stream_file is None:
-            streamer_data, re_in, im_in = generate_sample_data(signal_freq, sys_clk_freq, 10000, data_in_width,
+            streamer_data, re_in, im_in = generate_sample_data(signal_freq, sample_rate, 10000, data_in_width,
                 num_taps   = len(taps_data),
                 decimation = decimation,
             )
@@ -380,7 +383,17 @@ def main():
     parser.add_argument("--local-ip",       default="192.168.1.50",  help="Remote IP address of TFTP server.")
 
     # FIR Configuration.
-    parser.add_argument("--signal-freq",    default=10e6, type=float, help="Input signal frequency.")
+    parser.add_argument("--signal-freq",    default=10e6,  type=float, help="Input signal frequency.")
+    parser.add_argument("--data-in-width",  default=16,    type=int,   help="FIR input data width.")
+    parser.add_argument("--data-out-width", default=16,    type=int,   help="FIR output data width.")
+    parser.add_argument("--sample-rate",    default=4e6,   type=float, help="sampling frequency.")
+    parser.add_argument("--cutoff-freq",    default=600e3, type=float, help="cutoff Frequency.")
+    parser.add_argument("--operations",     default=6,     type=int,   help="number of operation to performs.")
+    parser.add_argument("--odd-operations", action="store_true",       help="is total operations is odd.")
+    parser.add_argument("--macc-trunc",     default=0,     type=int,   help="Truncation length for output of each MACC.")
+    parser.add_argument("--coeffs-width",   default=18,    type=int,   help="FIR coefficients width.")
+    parser.add_argument("--len-log2",       default=8,     type=int,   help="FIR maximum coefficients RAM capacity (log2).")
+    parser.add_argument("--decimation",     default=2,     type=int,   help="Decimate Factor.")
 
     args = parser.parse_args()
 
@@ -389,6 +402,16 @@ def main():
         sim_config.add_module("ethernet", "eth", args={"interface": "tap0", "ip": args.remote_ip})
 
     soc = SimSoC(stream_file=args.file,
+        data_in_width        = args.data_in_width,
+        data_out_width       = args.data_out_width,
+        operations           = args.operations,
+        odd_operations       = args.odd_operations,
+        macc_trunc           = args.macc_trunc,
+        coeffs_width         = args.coeffs_width,
+        len_log2             = args.len_log2,
+        decimation           = args.decimation,
+        sample_rate          = args.sample_rate,
+        cutoff_freq          = args.cutoff_freq,
         signal_freq          = args.signal_freq,
         with_etherbone       = args.with_etherbone,
         etherbone_ip_address = args.local_ip,
