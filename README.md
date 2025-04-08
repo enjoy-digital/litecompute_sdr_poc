@@ -9,25 +9,31 @@ the HDL language of their choice and to also provide example projects on various
 
 ![Image](https://github.com/user-attachments/assets/a5956085-1a22-4cf9-a580-338e8bb5f3de)
 
-Example of FPGA based PCIe accelerator infrastructure with LiteX and its cores.
+Example of FPGA based PCIe-based FPGA accelerator using LiteX and its cores.
 
-### [> Demonstrations
+## [> Demonstrations
 
-This repository provides two demonstrations:
-1. The second is based on *LiteX M2SDR* target (`targets/litex_m2sdr.py`: in this demonstration, the `MaiaSDRFFT` is connected between RFIC and
-   a second DMA Channel. The FFT may be fed with RFIC output (RX side) or set in loopback mode.
+This primary goal of this repository is to demonstrates how *Digital Signal Processing (DSP)* modules
+can be directly integrated into data streams -- either between a DMA writer/reader or between an
+external RFIC device and a DMA Channel.
 
-**Acorn demonstration**
+It also highligths:
+- `Amaranth` integration: both *FIR Filter* and *FFT* modules are written in the `Amaranth` HDL.
+- **Custom processing: Shows how to insert processing blocks into RX/TX datapaths.
 
-This demonstration targets the *SQRL Acorn CLE-215+* platform (`targets/acorn.py`).
-It implements a DMA loopback pipeline with the following data path:
-DMA Reader [-> LiteDRAM FIFO] -> FIR -> FFT -> DMA Writer
+Both demonstrations (`acorn` and `litex_m2sdr`) uses the same `sdr_processing` to integrates
+SDR processing in the RX datapath.
 
-The `LiteDRAM` module is optional and must be enabled at build time.
-All processing modules can be dynamically bypassed at runtime using
-*software/user/litepcie_util* (for more details, see *software/user/README.md*).
-The command is:
+### Acorn Demonstration
 
+- **Target**: *SQRL Acorn CLE-215+*
+- **Script**: `targets/acorn.py`
+
+This demonstration implements a DMA loopback pipeline with the following data path:
+`DMA Reader [-> LiteDRAM FIFO] -> FIR -> FFT -> DMA Writer`
+
+**Note**: `LiteDRAM` is optional and must be enabled at build time.
+Modules can be bypassed dynamically at runtime using `litepcie_util` with this command:
 ```bash
 litepcie_util [-f 0/1] [-i 0/1] [-l 0/1] stream_configuration
 ```
@@ -36,7 +42,8 @@ With:
 - `-i` to enable/disable the FIR filter (default: 1).
 - `-l` to enable/disable the LiteDRAMFIFO Module (default: 1).
 
-To build the bitstream the command is:
+**Build command**
+
 ```bash
 python3 -m targets.acorn --build [--load] [--flash] [--with-fft-window] [--fft-radix 2/4] [--fft-order-log2 x] [--with-litedram-fifo]
 ```
@@ -49,7 +56,23 @@ With:
 * `--with-litedram-fifo` enable integration of the DRAM between DMA reader and
   DMA writer
 
-**LiteX M2SDR**
+### LiteX M2SDR Demonstration
+
+- **Target**: *LiteX M2SDR*
+- **Script**: `targets/litex_m2sdr.py`
+
+This second demonstration uses `sdr_processing` module to integrates `MaiaSDRFIR` and `MaiaSDRFFT` in a new stream
+between the RFIC and a third DMA Channel.
+
+**Note**: The second DMA Channel is used to have raw samples as comparison.
+
+This demonstration is accompanied to a GUI (*software_m2sdr/sdr_gui*) with:
+- a panel dedicated to displays raw sample or FFT with waterfall
+- a panel dedicated to displays `MaiaSDRFFT` output with waterfall
+- a panel to configure *FIR filter* (including coefficients) and to enable/bypass with module
+
+**Build command**
+
 ```bash
 python3 -m targets.litex_m2sdr --build [--load] [--flash] [--with-pcie] [--variant] [--without-fft] [--with-fft-window] [--fft-radix 2/4] [--fft-order-log2 x]
 ```
@@ -65,24 +88,27 @@ With:
 * `--without-fir` disables FIR.
 * `--macc-trunk` Truncation length for output of each MACC.
 
-## [> Prepare Environment
--------------------------
+## [> Environment Setup
+-----------------------
 
-**Note**: with recent *Python* and `pip` it not more possible to install package via `pip`. A solution
-to force install is to create the file `$HOME/.config/pip.conf` with:
-```sh
-[global]
-break-system-packages = true
+### Python Pip Workaround
+
+Modern Python versions restrict certain system installations. To override:
+```bash
+mkdir -p $HOME/.config
+echo -e "[global]\nbreak-system-packages = true" > $HOME/.config/pip.conf
 ```
 
 ### [> LiteX
 
 Execute the following commands in a directory of your choice:
-- `wget https://raw.githubusercontent.com/enjoy-digital/litex/master/litex_setup.py`
-- `chmod +x litex_setup.py`
-- `./litex_setup.py --init`
-- `sudo ./litex_setup.py --install`
-- `sudo ./litex_setup.py --gcc`
+```bash
+wget https://raw.githubusercontent.com/enjoy-digital/litex/master/litex_setup.py
+chmod +x litex_setup.py
+./litex_setup.py --init
+sudo ./litex_setup.py --install
+sudo ./litex_setup.py --gcc
+```
 
 **LiteX** requires knowledge of the *Vivado* installation path, which is provided through an environment variable:
 ```bash
@@ -120,12 +146,13 @@ cd ../..
 pip3 install --user pm-remez
 ```
 
-### [> Cloning the Repository / Install
+### [> Clone and Install This Repository
 
-Execute the following:
-- `git clone https://github.com/enjoy-digital/litecompute_poc`
-- `cd litecompute_poc`
-- `pip3 install --user -e .`
+```bash
+git clone https://github.com/enjoy-digital/litecompute_poc
+cd litecompute_poc
+pip3 install --user -e .
+```
 
 ## [> Cores
 
@@ -278,6 +305,43 @@ self.comb += [
   self.post_conv.source.connect(self.pcie_dma0.sink),
 ]
 ```
+
+### [> SDRProcessing
+
+*gateware/sdr_processing.py* provides a wrapper with:
+- a `LiteSDRAMFIFO` Module
+- a `MaiaSDRFIR` Module
+- a `MaiaSDRFFT` Module
+
+It may instiated with a code similar too:
+```python
+self.sdr_processing = sdr_processing = SDRProcessing(platform, self,
+  # External FIFO.
+  with_litedram      = with_litedram_fifo,
+
+  # FIR.
+  with_fir           = True,
+  fir_data_in_width  = 16,
+  fir_data_out_width = 16,
+  fir_coeff_width    = 18,
+  fir_decim_width    = 7,
+  fir_oper_width     = 7,
+  fir_macc_trunc     = 0,
+  fir_len_log2       = 8,
+  fir_clk_domain     = "sys",
+  fir_with_csr       = True,
+  # FFT.
+  with_fft           = True,
+  fft_data_width     = 16,
+  fft_order_log2     = fft_order_log2,
+  fft_radix          = fft_radix,
+  fft_window         = with_fft_window,
+  fft_cmult3x        = False,
+  fft_clk_domain     = "sys",
+)
+```
+
+Most of attributes are similar to `MaiSDRFIR` and `MaiaSDRFFT`
 
 ## (> Simulation
 ----------------
