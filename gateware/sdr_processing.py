@@ -11,8 +11,6 @@ from migen import *
 
 from litex.gen import *
 
-from litedram.frontend.fifo import LiteDRAMFIFO
-
 from litex.soc.interconnect     import stream
 from litex.soc.interconnect.csr import *
 
@@ -21,14 +19,15 @@ from gateware.maia_sdr_fir import MaiaSDRFIR
 
 # SDR Processing -----------------------------------------------------------------------------------
 
+# Note/FIXME:
+# - sink may be connected via mux to fifo/fir/fft or source: but all modules may be configured with
+#   a specific size
+# - source may be connected via mux to fifo/fir/fft or sink: but all modules may be configured with
+#   a specific size
+
 class SDRProcessing(LiteXModule):
     def __init__(self, platform, soc,
         with_litedram      = False,
-        dram_write_port    = None,
-        dram_read_port     = None,
-        dram_data_width    = 32,
-        dram_base          = 0x00000000,
-        dram_depth         = 0x01000000,
 
         # FIR.
         with_fir           = False,
@@ -53,8 +52,11 @@ class SDRProcessing(LiteXModule):
         ):
 
         # Streams ----------------------------------------------------------------------------------
-        self.sink   = sink   = stream.Endpoint([("data", 2 * fir_data_in_width)])
-        self.source = source = stream.Endpoint([("data", 2 * fft_data_width)])
+        self.sink            = sink            = stream.Endpoint([("data", 2 * fir_data_in_width)])
+        self.source          = source          = stream.Endpoint([("data", 2 * fft_data_width)])
+
+        self.ext_fifo_sink   = ext_fifo_sink   = stream.Endpoint([("data", 2 * fir_data_in_width)])
+        self.ext_fifo_source = ext_fifo_source = stream.Endpoint([("data", 2 * fir_data_in_width)])
 
         # SDR DSP Generals CSR (FIR/FFT/LiteDRAM enable/disable (bypass) ---------------------------
         if with_fft or with_fir or with_litedram:
@@ -83,18 +85,6 @@ class SDRProcessing(LiteXModule):
         ep0 = stream.Endpoint([("re", fir_data_in_width),  ("im", fir_data_in_width)])
         ep1 = stream.Endpoint([("re", fir_data_out_width), ("im", fir_data_out_width)])
         ep2 = stream.Endpoint([("re", fft_data_width),     ("im", fft_data_width)])
-
-        # LiteDRAMFIFO.
-        # -------------
-        if with_litedram:
-            self.fifo_dsp = fifo_dsp = LiteDRAMFIFO(
-                data_width  = dram_data_width,
-                base        = dram_base,
-                depth       = dram_depth,
-                write_port  = dram_write_port,
-                read_port   = dram_read_port,
-                with_bypass = True
-            )
 
         # MAIA SDR FFT.
         # -------------
@@ -154,7 +144,6 @@ class SDRProcessing(LiteXModule):
 
         # RFIC -> FIFO -> [MaiaSDRFIR] -> MaiaSDRFFT -> PCIe.
         # ---------------------------------------------------
-
         # Default data path (everything in bypass).
         self.comb += [
             # sink -> ep0.
@@ -178,10 +167,10 @@ class SDRProcessing(LiteXModule):
         if with_litedram:
             self.comb += [
                 If(self._configuration.fields.litedram_fifo,
-                    sink.connect(self.fifo_dsp.sink),
-                    fifo_dsp.source.connect(ep0, omit=["data"]),
-                    ep0.re.eq(fifo_dsp.source.data[0: fir_data_in_width]),
-                    ep0.im.eq(fifo_dsp.source.data[fir_data_in_width:]),
+                    sink.connect(self.ext_fifo_source),
+                    ext_fifo_sink.connect(ep0, omit=["data"]),
+                    ep0.re.eq(ext_fifo_sink.data[0: fir_data_in_width]),
+                    ep0.im.eq(ext_fifo_sink.data[fir_data_in_width:]),
                 ),
             ]
 
