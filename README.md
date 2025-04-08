@@ -386,32 +386,43 @@ options:
                         Input signal frequency.
 ```
 
-## Using Core with acorn baseboard
+### [> FIR Simulation
 
-A ready to uses targets is available in the *targets* directory:
 ```bash
-./targets/acorn.py --help
-usage: acorn.py [-h] [--build] [--load] [--flash] [--variant VARIANT] [--programmer {openocd,openfpgaloader}] [--with-window] [--radix RADIX] [--fft-order-log2 FFT_ORDER_LOG2] [--with-fft-datapath-probe]
+usage: maia_sdr_fir_sim.py [-h] [--trace] [--file FILE] [--signal-freq SIGNAL_FREQ] [--data-in-width DATA_IN_WIDTH]
+                           [--data-out-width DATA_OUT_WIDTH] [--sample-rate SAMPLE_RATE] [--cutoff-freq CUTOFF_FREQ] 
+                           [--operations OPERATIONS] [--odd-operations] [--macc-trunc MACC_TRUNC]
+                           [--coeffs-width COEFFS_WIDTH] [--len-log2 LEN_LOG2] [--decimation DECIMATION]
 
-LiteX SoC on Acorn CLE-101/215(+).
+MAIA SDR Simulation.
 
 options:
   -h, --help            show this help message and exit
-  --build               Build bitstream
-  --load                Load bitstream
-  --flash               Flash bitstream.
-  --variant VARIANT     Board variant (cle-215+, cle-215 or cle-101).
-  --programmer {openocd,openfpgaloader}
-                        Programmer select from OpenOCD/openFPGALoader.
-  --with-window         Enable FFT Windowing.
-  --radix RADIX         Radix 2/4.
-  --fft-order-log2 FFT_ORDER_LOG2
-                        Log2 of the FFT order.
-  --with-fft-datapath-probe
-                        Enable FFT Datapath Probe.
+  --trace               Enable VCD tracing.
+  --file FILE           input stream file.
+  --signal-freq SIGNAL_FREQ
+                        Input signal frequency.
+  --data-in-width DATA_IN_WIDTH
+                        FIR input data width.
+  --data-out-width DATA_OUT_WIDTH
+                        FIR output data width.
+  --sample-rate SAMPLE_RATE
+                        sampling frequency.
+  --cutoff-freq CUTOFF_FREQ
+                        cutoff Frequency.
+  --operations OPERATIONS
+                        number of operation to performs.
+  --odd-operations      is total operations is odd.
+  --macc-trunc MACC_TRUNC
+                        Truncation length for output of each MACC.
+  --coeffs-width COEFFS_WIDTH
+                        FIR coefficients width.
+  --len-log2 LEN_LOG2   FIR maximum coefficients RAM capacity (log2).
+  --decimation DECIMATION
+                        Decimate Factor
 ```
 
-This target performs `PCIe` -> `FFT` -> `PCIe` processing.
+**Note:** when `--file` is used `--signal-freq` is not required.
 
 ### Preparing FIR Coeffcients
 
