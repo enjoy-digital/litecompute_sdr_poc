@@ -249,7 +249,12 @@ self.comb += [
 
 This Module is a wrapper for the [FIR](https://github.com/maia-sdr/maia-sdr/blob/main/maia-hdl/maia_hdl/fir.py)
 
-Example usage:
+**latency and throughput**
+
+- The **FIR** is able to receives one new sample after `operations` clock-cycles
+- The initial latency is `operations * 2 * decimations` clock-cycles.
+
+**Example usage:**
 
 ```python
 self.fir = fir   = MaiaSDRFIR(platform,
