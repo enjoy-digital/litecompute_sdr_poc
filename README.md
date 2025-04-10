@@ -164,6 +164,20 @@ This Module is a wrapper for the [FFT](https://github.com/maia-sdr/maia-sdr/blob
 For this *Maia SDR* Modules, configurations/parameters are set at build time to
 produce the Verilog file. It's not possible to changes it at run time.
 
+**latency and throughput**
+
+The `MaiaSDRFFT` is able to receives one new sample at each clock cycle.
+Its initial latency depends on *FFT* configuration (windowing, radix and order).
+
+- 1072 for an *FFT* with an order of 1024, a radix 2 and no windowing
+- 1047 for an *FFT* with an order of 1024, a radix 4 and no windowing
+- 1052 for an *FFT* with an order of 1024, a radix R22 and no windowing
+- 50 for an *FFT* with an order of 32, a radix 2 and no windowing
+- 21 for an *FFT* with an order of 32, a radix 4 and no windowing
+- 23 for an *FFT* with an order of 32, a radix R22 and no windowing
+
+Using *windowing* adds one clock cycle
+
 **Example usage:**
 
 ```python
