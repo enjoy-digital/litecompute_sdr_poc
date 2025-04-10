@@ -100,7 +100,7 @@ class Platform(SimPlatform):
 class SimSoC(SoCCore):
     def __init__(self, sys_clk_freq=int(200e6), data_width=16, stream_file=None,
         with_window    = False,
-        radix          = 2,
+        radix          = "2",
         fft_order_log2 = 10,
         signal_freq    = 10e6,
         ):
@@ -185,7 +185,7 @@ def main():
 
     # FFT Configuration.
     parser.add_argument("--with-window",    action="store_true",      help="Enable FFT Windowing.")
-    parser.add_argument("--radix",          default=2,    type=int,   help="Radix 2/4.")
+    parser.add_argument("--radix",          default="2",              help="Radix 2/4.")
     parser.add_argument("--fft-order-log2", default=5,    type=int,   help="Log2 of the FFT order.")
     parser.add_argument("--signal-freq",    default=10e6, type=float, help="Input signal frequency.")
 
