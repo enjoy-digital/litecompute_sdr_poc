@@ -548,3 +548,15 @@ With:
 - `--dump-file` the file produces by `litepcie_test record`
 - `--fs` the sample frequency (default: 100e6)
 - `--fft-order` FFT order (default: 32)
+
+
+## [> Acknowledgments.
+----------------------
+
+This work has been supported by NLNet, whose funding has significantly contributed to the
+development and enhancement of this project. We're grateful for their support in making this
+initiative possible.
+
+<p align="center">
+  <img src="doc/nlnet.svg" width="300" />
+</p>
